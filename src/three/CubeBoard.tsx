@@ -11,6 +11,7 @@ import { Canvas, useFrame, useThree, type ThreeEvent } from '@react-three/fiber'
 import { CanvasTexture, Quaternion, SRGBColorSpace, Vector3, type Group } from 'three';
 import { FACES, type FaceId } from '../core/geometry';
 import type { Board } from '../core/board';
+import { faceNotes, faceNotesSignature, notesAt, type NotesMap } from '../core/notes';
 import { drawFace, TEXTURE_SIZE } from './faceTexture';
 import {
   computeFrontFaces,
@@ -68,6 +69,7 @@ declare global {
       getFrontFace: () => FaceId;
       select: (face: FaceId, i: number) => void;
       getCell: (face: FaceId, i: number) => { value: number; given: boolean };
+      getNotes: (face: FaceId, i: number) => number[];
       debug: () => {
         dragging: boolean;
         poseIndex: number;
@@ -84,6 +86,10 @@ export interface CubeBoardProps {
   board: Board;
   selected: CellRef | null;
   wrongCell: CellRef | null;
+  /** 候補メモ (canonical cellId → 候補集合)。immutable 更新なので参照変化 = 内容変化。 */
+  notes: NotesMap;
+  /** メモモード中か (選択枠を破線で描く)。 */
+  noteMode: boolean;
   /** board のミュータブル更新を検知するためのバージョン番号 (App の bump カウンタ)。 */
   boardVersion: number;
   onSelectCell: (ref: CellRef) => void;
@@ -96,8 +102,18 @@ export interface CubeBoardProps {
 }
 
 function CubeScene(props: CubeBoardProps) {
-  const { board, selected, wrongCell, boardVersion, onSelectCell, onFrontFaceChange, introNonce, onIntroStateChange } =
-    props;
+  const {
+    board,
+    selected,
+    wrongCell,
+    notes,
+    noteMode,
+    boardVersion,
+    onSelectCell,
+    onFrontFaceChange,
+    introNonce,
+    onIntroStateChange,
+  } = props;
   const { gl, camera } = useThree();
   const groupRef = useRef<Group>(null);
 
@@ -149,23 +165,33 @@ function CubeScene(props: CubeBoardProps) {
   onIntroStateChangeRef.current = onIntroStateChange;
 
   // props を ref 経由で参照する (redraw をイベント/フレームから呼ぶため)。
-  const stateRef = useRef({ board, selected, wrongCell });
-  stateRef.current = { board, selected, wrongCell };
+  const stateRef = useRef({ board, selected, wrongCell, notes, noteMode });
+  stateRef.current = { board, selected, wrongCell, notes, noteMode };
 
   const redraw = useCallback(() => {
     const table = tableRef.current;
     if (!table) return;
-    const { board, selected, wrongCell } = stateRef.current;
+    const { board, selected, wrongCell, notes, noteMode } = stateRef.current;
     const pose = snappedPoseRef.current;
     const flags = highlightFlags(board, selected, wrongCell);
     FACES.forEach((face: FaceId, fi) => {
       const deg = table.angles[pose][fi];
-      // 変更があった面だけ再描画: 正立角 + 盤面値 + ハイライトのシグネチャで判定。
-      const sig = `${deg}|${board.faces[face].join('')}|${flags[face].join('')}`;
+      // 変更があった面だけ再描画: 正立角 + 盤面値 + ハイライト + メモ + メモモードのシグネチャで判定。
+      // noteMode を全面のシグネチャに含めるためモード切替時は 6 面焼き直しになるが、
+      // 切替はユーザー操作 (低頻度) なので単純さを優先する。
+      const noteSig = faceNotesSignature(notes, face);
+      const sig = `${deg}|${board.faces[face].join('')}|${flags[face].join('')}|${noteSig}|${noteMode ? 1 : 0}`;
       if (lastSigRef.current[fi] === sig) return;
       const ctx = canvases[fi].getContext('2d');
       if (!ctx) return;
-      drawFace(ctx, { face, board, uprightDeg: deg, flags: flags[face] });
+      drawFace(ctx, {
+        face,
+        board,
+        uprightDeg: deg,
+        flags: flags[face],
+        notes: faceNotes(notes, face),
+        noteMode,
+      });
       textures[fi].needsUpdate = true;
       lastSigRef.current[fi] = sig;
     });
@@ -194,10 +220,10 @@ function CubeScene(props: CubeBoardProps) {
     notifyFront();
   }, [camera, redraw, notifyFront]);
 
-  // 盤面・選択・誤答の変化で再描画 (シグネチャ比較で実際に変わった面のみ焼き直す)。
+  // 盤面・選択・誤答・メモの変化で再描画 (シグネチャ比較で実際に変わった面のみ焼き直す)。
   useEffect(() => {
     redraw();
-  }, [boardVersion, selected, wrongCell, redraw]);
+  }, [boardVersion, selected, wrongCell, notes, noteMode, redraw]);
 
   // イントロ回転演出: introNonce が増えるたび再生する (初回開始・「新しいゲーム」共通)。
   // テクスチャは正面姿勢 (pose 0) の正立角のまま回すので、回転中も 6 面の数字が
@@ -440,6 +466,8 @@ function CubeScene(props: CubeBoardProps) {
         value: stateRef.current.board.faces[face][i],
         given: stateRef.current.board.givens[face][i] === 1,
       }),
+      getNotes: (face: FaceId, i: number) =>
+        [...(notesAt(stateRef.current.notes, face, i) ?? [])].sort((a, b) => a - b),
       debug: () => {
         const intro = introRef.current;
         return {

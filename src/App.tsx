@@ -7,6 +7,13 @@ import { useCallback, useEffect, useReducer, useRef, useState } from 'react';
 import type { FaceId } from './core/board';
 import { eraseCell, elapsedMs, inputCell, newGame, score } from './core/session';
 import type { Session } from './core/session';
+import {
+  cleanupAfterInput,
+  clearCellNotes,
+  emptyNotes,
+  toggleNote,
+  type NotesMap,
+} from './core/notes';
 import { CubeBoard } from './three/CubeBoard';
 import { moveSelection, type ArrowKey, type CellRef } from './three/selection';
 import { NumberPad } from './components/NumberPad';
@@ -38,6 +45,9 @@ function App() {
   const [session, setSession] = useState<Session | null>(null);
   const [selected, setSelected] = useState<CellRef | null>(null);
   const [wrongCell, setWrongCell] = useState<CellRef | null>(null);
+  // 候補数字メモ (鉛筆メモ)。canonical cellId → 候補集合。表示専用でクリア判定に影響しない。
+  const [notes, setNotes] = useState<NotesMap>(() => emptyNotes());
+  const [noteMode, setNoteMode] = useState(false);
   // 正面 face (カメラに最も正対している面) とその正立角。CubeBoard のスナップ確定で更新。
   const [front, setFront] = useState<{ face: FaceId; deg: number }>({ face: 'F', deg: 0 });
   const [now, setNow] = useState<number>(() => Date.now());
@@ -57,6 +67,8 @@ function App() {
     setSession(newGame(seed, Date.now()));
     setSelected(null);
     setWrongCell(null);
+    setNotes(emptyNotes());
+    setNoteMode(false);
     setResult(null);
     setNow(Date.now());
     setIntroActive(true);
@@ -82,25 +94,49 @@ function App() {
     wrongTimer.current = window.setTimeout(() => setWrongCell(null), 450);
   }, []);
 
+  // 候補メモのトグル (メモモードの数字 / Shift+数字)。given・値の入ったセルには書けない。
+  const handleNoteToggle = useCallback(
+    (value: number) => {
+      if (!session || session.status !== 'playing' || !selected || introActive) return;
+      if (session.puzzle.givens[selected.face][selected.i] === 1) return;
+      if (session.board.faces[selected.face][selected.i] !== 0) return;
+      setNotes((prev) => toggleNote(prev, selected.face, selected.i, value));
+    },
+    [session, selected, introActive],
+  );
+
   const handleInput = useCallback(
     (value: number) => {
       if (!session || session.status !== 'playing' || !selected || introActive) return;
+      if (noteMode) {
+        handleNoteToggle(value);
+        return;
+      }
       const res = inputCell(session, selected.face, selected.i, value);
       if (res.wrong) flashWrong(selected);
+      if (res.accepted) {
+        // 正解確定: そのセルのメモを消し、peers (面またぎ含む) のメモから同じ数字を消す。
+        setNotes((prev) => cleanupAfterInput(prev, selected.face, selected.i, value));
+      }
       bump();
       if (res.won) {
         const t = Date.now();
         setResult({ score: score(session, t), ms: elapsedMs(session, t), mistakes: session.mistakes });
       }
     },
-    [session, selected, flashWrong, introActive],
+    [session, selected, flashWrong, introActive, noteMode, handleNoteToggle],
   );
 
   const handleErase = useCallback(() => {
     if (!session || session.status !== 'playing' || !selected || introActive) return;
+    if (noteMode) {
+      // メモモード中の ⌫ は選択セルのメモ全消去。
+      setNotes((prev) => clearCellNotes(prev, selected.face, selected.i));
+      return;
+    }
     eraseCell(session, selected.face, selected.i);
     bump();
-  }, [session, selected, introActive]);
+  }, [session, selected, introActive, noteMode]);
 
   const handleFrontFaceChange = useCallback((face: FaceId, deg: number) => {
     setFront({ face, deg });
@@ -110,11 +146,18 @@ function App() {
     setIntroActive(active);
   }, []);
 
-  // キーボード操作 (数字入力・消去・矢印移動)。矢印は正面 face 内を画面方向で移動する。
+  // キーボード操作 (数字入力・消去・矢印移動・メモ)。矢印は正面 face 内を画面方向で移動する。
+  // M でメモモード切替、Shift+数字はモードに関わらず候補トグル。
   useEffect(() => {
     if (!session || session.status !== 'playing' || introActive) return;
     const onKey = (e: KeyboardEvent) => {
-      if (e.key >= '1' && e.key <= '9') {
+      if (e.metaKey || e.ctrlKey || e.altKey) return;
+      if ((e.key === 'm' || e.key === 'M') && !e.shiftKey) {
+        setNoteMode((v) => !v);
+      } else if (e.shiftKey && /^Digit[1-9]$/.test(e.code)) {
+        // Shift+数字は記号キーになる (例: Shift+1 = '!') ので e.code で判定する。
+        handleNoteToggle(Number(e.code.slice(5)));
+      } else if (e.key >= '1' && e.key <= '9') {
         handleInput(Number(e.key));
       } else if (e.key === 'Backspace' || e.key === 'Delete' || e.key === '0') {
         handleErase();
@@ -133,7 +176,7 @@ function App() {
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [session, selected, front, handleInput, handleErase, introActive]);
+  }, [session, selected, front, handleInput, handleErase, handleNoteToggle, introActive]);
 
   // 結果 dialog が開いたら「もう一度」にフォーカスを移し、Escape で再スタートできるように。
   useEffect(() => {
@@ -165,7 +208,9 @@ function App() {
           <button type="button" className="btn-primary" onClick={startGame}>
             ゲームを始める
           </button>
-          <p className="hint-text">ドラッグで回転 / セルを選んで数字パッドか 1〜9 / ⌫ キーで入力</p>
+          <p className="hint-text">
+            ドラッグで回転 / セルを選んで数字パッドか 1〜9 / ⌫ キーで入力 / M でメモモード
+          </p>
         </div>
       </div>
     );
@@ -208,6 +253,8 @@ function App() {
           board={session.board}
           selected={selected}
           wrongCell={wrongCell}
+          notes={notes}
+          noteMode={noteMode}
           boardVersion={version}
           onSelectCell={setSelected}
           onFrontFaceChange={handleFrontFaceChange}
@@ -216,7 +263,14 @@ function App() {
         />
       </main>
 
-      <NumberPad onInput={handleInput} onErase={handleErase} disabled={!canInput} />
+      <NumberPad
+        onInput={handleInput}
+        onErase={handleErase}
+        disabled={!canInput}
+        noteMode={noteMode}
+        onToggleNoteMode={() => setNoteMode((v) => !v)}
+        noteToggleDisabled={won || introActive}
+      />
 
       {result && (
         <div className="overlay" role="dialog" aria-modal="true" aria-label="結果">

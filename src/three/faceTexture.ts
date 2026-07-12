@@ -28,6 +28,9 @@ const PLAYER_COLOR = '#2f6398';
 // 選択枠 = 氷青 (desaturated ice blue)。
 const ACCENT = '#5a8fc4';
 
+// 候補メモ (鉛筆メモ): エセリアル基調に合わせた淡いグレー。数字より必ず弱く。
+const NOTE_COLOR = 'rgba(74, 86, 108, 0.62)';
+
 // ハイライトは下地の上に半透明オーバーレイ (優先度: WRONG > SELECTED > SAME > PEER)。
 // 選択系は氷青、誤答は柔らかい赤。
 const OVERLAY_PEER = 'rgba(122, 160, 204, 0.14)';
@@ -44,11 +47,15 @@ export interface DrawFaceOptions {
   flags?: Uint8Array;
   /** 左上に面ラベル (U/F/...) を描くか (デバッグ用)。 */
   label?: boolean;
+  /** 面ぶん (81) の候補メモ集合。省略時はメモなし。値が入っているセルは描かない。 */
+  notes?: (ReadonlySet<number> | undefined)[];
+  /** メモモード中か。選択枠を破線にしてモードを視覚化する。 */
+  noteMode?: boolean;
 }
 
 /** 1 面ぶんのテクスチャを ctx (TEXTURE_SIZE 四方) に描画する。 */
 export function drawFace(ctx: CanvasRenderingContext2D, opts: DrawFaceOptions): void {
-  const { face, board, uprightDeg, flags } = opts;
+  const { face, board, uprightDeg, flags, notes, noteMode } = opts;
   const S = TEXTURE_SIZE;
   const cellSize = S / 9;
 
@@ -118,15 +125,17 @@ export function drawFace(ctx: CanvasRenderingContext2D, opts: DrawFaceOptions): 
     ctx.stroke();
   }
 
-  // 選択セルの枠 (グリッド線より上)。氷青。
+  // 選択セルの枠 (グリッド線より上)。氷青。メモモード中は破線でモードを示す。
   if (flags) {
     ctx.strokeStyle = ACCENT;
     ctx.lineWidth = 10;
+    if (noteMode) ctx.setLineDash([cellSize * 0.16, cellSize * 0.1]);
     for (let i = 0; i < 81; i++) {
       if (!(flags[i] & FLAG_SELECTED)) continue;
       const { x, y } = centers[i];
       ctx.strokeRect(x - cellSize / 2 + 5, y - cellSize / 2 + 5, cellSize - 10, cellSize - 10);
     }
+    ctx.setLineDash([]);
   }
 
   // 数字。セル中心で uprightDeg 回転して描く。given は濃色インク、プレイヤー入力は青インク。
@@ -145,6 +154,29 @@ export function drawFace(ctx: CanvasRenderingContext2D, opts: DrawFaceOptions): 
     // middle ベースラインの光学的ズレを少し補正。
     ctx.fillText(String(v), 0, cellSize * 0.04);
     ctx.restore();
+  }
+
+  // 候補メモ: 空セルに 3×3 ミニグリッド (1=左上 … 9=右下) で小さく描く。
+  // セル中心で uprightDeg 回転してから相対座標に置くので、ミニグリッドごと画面正立する。
+  if (notes) {
+    ctx.font = `500 ${Math.round(cellSize * 0.24)}px "Helvetica Neue", Arial, sans-serif`;
+    ctx.fillStyle = NOTE_COLOR;
+    const step = cellSize * 0.29; // ミニグリッドの間隔
+    for (let i = 0; i < 81; i++) {
+      const set = notes[i];
+      if (!set || set.size === 0) continue;
+      if (board.faces[face][i] !== 0) continue; // 値が入ったセルには描かない
+      const { x, y } = centers[i];
+      ctx.save();
+      ctx.translate(x, y);
+      ctx.rotate(rad);
+      for (const n of set) {
+        const col = (n - 1) % 3;
+        const row = Math.floor((n - 1) / 3);
+        ctx.fillText(String(n), (col - 1) * step, (row - 1) * step + cellSize * 0.02);
+      }
+      ctx.restore();
+    }
   }
 
   if (opts.label) {

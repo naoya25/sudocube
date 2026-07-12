@@ -367,6 +367,22 @@ button {
 .pad-erase {
   color: var(--text-muted);
 }
+/* メモモードトグル: 下段に横長で置く。ON 中は氷青に発光してモードを示す。 */
+.pad-note {
+  grid-column: 1 / -1;
+  aspect-ratio: auto;
+  padding: 10px 0;
+  font-size: 14px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  color: var(--text-muted);
+}
+.pad-note.active {
+  color: #cfe2f5;
+  border-color: rgba(122, 160, 204, 0.75);
+  background: rgba(90, 143, 196, 0.18);
+  box-shadow: 0 0 22px rgba(122, 160, 204, 0.35);
+}
 
 /* --- 結果オーバーレイ --- */
 .overlay {
