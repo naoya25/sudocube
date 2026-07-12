@@ -6,7 +6,7 @@ export type FaceId = 'U' | 'D' | 'F' | 'B' | 'L' | 'R';
 // グローバルセル id の順序を固定する (faceIdx * 81 + i)。
 export const FACES: readonly FaceId[] = ['U', 'D', 'F', 'B', 'L', 'R'];
 
-type Vec3 = readonly [number, number, number];
+export type Vec3 = readonly [number, number, number];
 interface FaceGeo {
   origin: Vec3;
   rowDir: Vec3;
@@ -48,6 +48,14 @@ function pointOf(face: FaceId, r: number, c: number): Vec3 {
     g.origin[1] + r * g.rowDir[1] + c * g.colDir[1],
     g.origin[2] + r * g.rowDir[2] + c * g.colDir[2],
   ];
+}
+
+/**
+ * セル格子点 (r, c) の 3D 座標 (0..8 の整数格子)。
+ * レンダリング層が GEO 定義を複製せずにセル位置を得るための読み取り専用アクセサ。
+ */
+export function facePoint(face: FaceId, r: number, c: number): Vec3 {
+  return pointOf(face, r, c);
 }
 
 // 念のため誤差込みで一致を取る union-find (実際には整数なので厳密一致)。
