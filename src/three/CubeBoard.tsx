@@ -30,6 +30,7 @@ const DRAG_SPEED = 0.008;
 const SNAP_RATE = 12; // slerp の吸着速度 (1/s)
 const SNAP_DONE_RAD = 0.004;
 const CLICK_MAX_PX = 6; // pointerdown→up の移動量がこれ以下ならクリック (セル選択) 扱い
+const AXIS_LOCK_PX = 8; // 累積移動量がこれを超えた時点でドラッグ軸 (横/縦) をロックする
 
 declare global {
   interface Window {
@@ -144,11 +145,16 @@ function CubeScene(props: CubeBoardProps) {
     redraw();
   }, [boardVersion, selected, wrongCell, redraw]);
 
-  // ドラッグ回転。
+  // ドラッグ回転 (軸ロック式)。
+  // 累積移動量が AXIS_LOCK_PX を超えた時点で |dx|>|dy| なら横・そうでなければ縦に
+  // ロックし、そのドラッグ中はスクリーン単軸 (カメラ up / right) まわりのみ回す。
   useEffect(() => {
     const el = gl.domElement;
     let lastX = 0;
     let lastY = 0;
+    let startX = 0;
+    let startY = 0;
+    let axisLock: 'h' | 'v' | null = null;
     const camRight = new Vector3();
     const camUp = new Vector3();
     const dq = new Quaternion();
@@ -158,6 +164,9 @@ function CubeScene(props: CubeBoardProps) {
       snapTargetRef.current = null;
       lastX = e.clientX;
       lastY = e.clientY;
+      startX = e.clientX;
+      startY = e.clientY;
+      axisLock = null;
       // 合成イベントや既に離れたポインタでは InvalidPointerId を投げるので握りつぶす。
       try {
         el.setPointerCapture(e.pointerId);
@@ -169,15 +178,27 @@ function CubeScene(props: CubeBoardProps) {
       if (!draggingRef.current) return;
       const group = groupRef.current;
       if (!group) return;
-      const dx = e.clientX - lastX;
-      const dy = e.clientY - lastY;
+      let dx = e.clientX - lastX;
+      let dy = e.clientY - lastY;
       lastX = e.clientX;
       lastY = e.clientY;
-      camRight.set(1, 0, 0).applyQuaternion(camera.quaternion);
-      camUp.set(0, 1, 0).applyQuaternion(camera.quaternion);
-      dq.setFromAxisAngle(camUp, dx * DRAG_SPEED);
-      group.quaternion.premultiply(dq);
-      dq.setFromAxisAngle(camRight, dy * DRAG_SPEED);
+      if (axisLock === null) {
+        // 軸未確定: 累積移動量が閾値を超えるまで回転しない (クリック判定とも整合)。
+        const tdx = e.clientX - startX;
+        const tdy = e.clientY - startY;
+        if (Math.max(Math.abs(tdx), Math.abs(tdy)) <= AXIS_LOCK_PX) return;
+        axisLock = Math.abs(tdx) > Math.abs(tdy) ? 'h' : 'v';
+        // ロック確定フレームは累積分をまとめて適用し、取りこぼしをなくす。
+        dx = tdx;
+        dy = tdy;
+      }
+      if (axisLock === 'h') {
+        camUp.set(0, 1, 0).applyQuaternion(camera.quaternion);
+        dq.setFromAxisAngle(camUp, dx * DRAG_SPEED);
+      } else {
+        camRight.set(1, 0, 0).applyQuaternion(camera.quaternion);
+        dq.setFromAxisAngle(camRight, dy * DRAG_SPEED);
+      }
       group.quaternion.premultiply(dq);
       poseIndexRef.current = -1;
     };
