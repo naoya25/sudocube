@@ -54,6 +54,8 @@ body {
   background: var(--bg);
   color: var(--text);
   overflow-x: hidden;
+  /* モバイル: キューブ操作近辺のスクロールで pull-to-refresh を誤発火させない */
+  overscroll-behavior-y: none;
 }
 
 /* 背景: 白い放射グロー + 淡いもや (多層 radial-gradient)。ゆっくり漂う。 */
@@ -106,6 +108,8 @@ body::after {
 button {
   font-family: inherit;
   cursor: pointer;
+  /* モバイル: ダブルタップズーム誘発と 300ms 遅延を抑止 (数字パッド連打対策) */
+  touch-action: manipulation;
 }
 
 :focus-visible {
@@ -275,6 +279,25 @@ button {
   display: flex;
   align-items: center;
   gap: 12px;
+}
+.hud .btn-ghost {
+  white-space: nowrap;
+}
+/* 狭幅 (スマホ縦): ロゴ+ボタンを1行目、stat チップ群を2行目に折り返す。
+   1行のままだと 390px 以下で「新しいゲーム」ボタンが画面外に押し出される。 */
+@media (max-width: 480px) {
+  .hud {
+    flex-wrap: wrap;
+    row-gap: 10px;
+  }
+  .hud .btn-ghost {
+    order: 1;
+    margin-left: auto;
+  }
+  .hud-stats {
+    order: 2;
+    flex-basis: 100%;
+  }
 }
 .hud-brand {
   flex: 0 0 auto;
