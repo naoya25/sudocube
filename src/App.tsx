@@ -148,6 +148,19 @@ function App() {
     setShowHistory(true);
   }, [session, notes]);
 
+  // ゲーム中 HUD のロゴ: 現ゲームを即時セーブしてからスタート画面へ。
+  const goHomeFromGame = useCallback(() => {
+    if (saveTimer.current) window.clearTimeout(saveTimer.current);
+    if (session && session.status === 'playing' && saveIdRef.current) {
+      saveSlot(saveIdRef.current, session, notes, seedRef.current, Date.now());
+    }
+    setSession(null);
+    setSelected(null);
+    setResult(null);
+    setSaves(loadSaves());
+    setShowHistory(false);
+  }, [session, notes]);
+
   // 履歴ページの「削除」(確認済み)。
   const handleDeleteSave = useCallback((id: string) => {
     deleteSave(id);
@@ -344,7 +357,9 @@ function App() {
     <div className="app">
       <header className="hud">
         <div className="hud-brand">
-          <span className="hud-logo">SUDOCUBE</span>
+          <button type="button" className="hud-logo" onClick={goHomeFromGame} title="トップに戻る">
+            SUDOCUBE
+          </button>
         </div>
         <div className="hud-stats">
           <div className="stat">
