@@ -30,6 +30,10 @@ const ACCENT = '#5a8fc4';
 
 // 候補メモ (鉛筆メモ): エセリアル基調に合わせた淡いグレー。数字より必ず弱く。
 const NOTE_COLOR = 'rgba(74, 86, 108, 0.62)';
+// same-number 強調中のメモグリフ: 氷青 (ACCENT と同系) + 太め + わずかな発光。
+// セル背景は塗らない (値セルの SAME オーバーレイとの区別を守る)。
+const NOTE_SAME_COLOR = '#4a82ba';
+const NOTE_SAME_GLOW = 'rgba(122, 160, 204, 0.9)';
 
 // ハイライトは下地の上に半透明オーバーレイ (優先度: WRONG > SELECTED > SAME > PEER)。
 // 選択系は氷青、誤答は柔らかい赤。
@@ -51,11 +55,13 @@ export interface DrawFaceOptions {
   notes?: (ReadonlySet<number> | undefined)[];
   /** メモモード中か。選択枠を破線にしてモードを視覚化する。 */
   noteMode?: boolean;
+  /** same-number 強調中の数字 (1..9)。一致するメモグリフだけ氷青で強調する。0/省略で強調なし。 */
+  sameDigit?: number;
 }
 
 /** 1 面ぶんのテクスチャを ctx (TEXTURE_SIZE 四方) に描画する。 */
 export function drawFace(ctx: CanvasRenderingContext2D, opts: DrawFaceOptions): void {
-  const { face, board, uprightDeg, flags, notes, noteMode } = opts;
+  const { face, board, uprightDeg, flags, notes, noteMode, sameDigit } = opts;
   const S = TEXTURE_SIZE;
   const cellSize = S / 9;
 
@@ -159,8 +165,9 @@ export function drawFace(ctx: CanvasRenderingContext2D, opts: DrawFaceOptions): 
   // 候補メモ: 空セルに 3×3 ミニグリッド (1=左上 … 9=右下) で小さく描く。
   // セル中心で uprightDeg 回転してから相対座標に置くので、ミニグリッドごと画面正立する。
   if (notes) {
-    ctx.font = `500 ${Math.round(cellSize * 0.24)}px "Helvetica Neue", Arial, sans-serif`;
-    ctx.fillStyle = NOTE_COLOR;
+    const noteFont = `500 ${Math.round(cellSize * 0.24)}px "Helvetica Neue", Arial, sans-serif`;
+    // 強調グリフは太めウェイト + わずかな発光 (セル背景は塗らない)。
+    const noteSameFont = `700 ${Math.round(cellSize * 0.24)}px "Helvetica Neue", Arial, sans-serif`;
     const step = cellSize * 0.29; // ミニグリッドの間隔
     for (let i = 0; i < 81; i++) {
       const set = notes[i];
@@ -173,7 +180,18 @@ export function drawFace(ctx: CanvasRenderingContext2D, opts: DrawFaceOptions): 
       for (const n of set) {
         const col = (n - 1) % 3;
         const row = Math.floor((n - 1) / 3);
+        const isSame = sameDigit !== undefined && sameDigit > 0 && n === sameDigit;
+        ctx.font = isSame ? noteSameFont : noteFont;
+        ctx.fillStyle = isSame ? NOTE_SAME_COLOR : NOTE_COLOR;
+        if (isSame) {
+          ctx.shadowColor = NOTE_SAME_GLOW;
+          ctx.shadowBlur = cellSize * 0.06;
+        }
         ctx.fillText(String(n), (col - 1) * step, (row - 1) * step + cellSize * 0.02);
+        if (isSame) {
+          ctx.shadowColor = 'transparent';
+          ctx.shadowBlur = 0;
+        }
       }
       ctx.restore();
     }

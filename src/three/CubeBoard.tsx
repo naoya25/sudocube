@@ -174,13 +174,24 @@ function CubeScene(props: CubeBoardProps) {
     const { board, selected, wrongCell, notes, noteMode } = stateRef.current;
     const pose = snappedPoseRef.current;
     const flags = highlightFlags(board, selected, wrongCell);
+    // same-number 強調中の数字 (selection.ts の FLAG_SAME と同じ発動条件: 値セル選択時のみ)。
+    const sameDigit = selected ? board.faces[selected.face][selected.i] : 0;
     FACES.forEach((face: FaceId, fi) => {
       const deg = table.angles[pose][fi];
-      // 変更があった面だけ再描画: 正立角 + 盤面値 + ハイライト + メモ + メモモードのシグネチャで判定。
+      // 変更があった面だけ再描画: 正立角 + 盤面値 + ハイライト + メモ + メモモード +
+      // メモ強調数字のシグネチャで判定。
       // noteMode を全面のシグネチャに含めるためモード切替時は 6 面焼き直しになるが、
       // 切替はユーザー操作 (低頻度) なので単純さを優先する。
       const noteSig = faceNotesSignature(notes, face);
-      const sig = `${deg}|${board.faces[face].join('')}|${flags[face].join('')}|${noteSig}|${noteMode ? 1 : 0}`;
+      const fNotes = faceNotes(notes, face);
+      // メモ強調はこの面に sameDigit を含む可視メモ (空セル) があるときだけ見た目が変わるので、
+      // その場合のみ数字をシグネチャに乗せる (全面戻し忘れ・過剰再描画のどちらも避ける)。
+      const noteHl =
+        sameDigit > 0 &&
+        fNotes.some((set, i) => set?.has(sameDigit) === true && board.faces[face][i] === 0)
+          ? sameDigit
+          : 0;
+      const sig = `${deg}|${board.faces[face].join('')}|${flags[face].join('')}|${noteSig}|${noteMode ? 1 : 0}|${noteHl}`;
       if (lastSigRef.current[fi] === sig) return;
       const ctx = canvases[fi].getContext('2d');
       if (!ctx) return;
@@ -189,8 +200,9 @@ function CubeScene(props: CubeBoardProps) {
         board,
         uprightDeg: deg,
         flags: flags[face],
-        notes: faceNotes(notes, face),
+        notes: fNotes,
         noteMode,
+        sameDigit,
       });
       textures[fi].needsUpdate = true;
       lastSigRef.current[fi] = sig;
