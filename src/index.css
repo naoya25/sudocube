@@ -1,59 +1,47 @@
-/* Sudocube ゲーム UI のスタイル。ライト/ダーク両対応。 */
+/* Sudocube — エセリアルデザイン (ダーク固定)。
+   コンセプト: 闇に浮かぶ白く発光するすりガラスのキューブ。
+   カラールール: モノクローム (白の不透明度階層) 基調。
+   機能色は 2 つだけ — 氷青 (選択系) / 柔らかい赤 (誤答)。 */
 
 :root {
-  --bg: #f4f5f8;
-  --bg-grad: radial-gradient(1200px 600px at 50% -10%, #eef1fb 0%, #f4f5f8 55%);
-  --surface: #ffffff;
-  --surface-2: #f6f7fa;
-  --border: #e6e8ee;
-  --border-strong: #b9bdc9;
-  --text: #1a1d26;
-  --text-muted: #6b7180;
-  --given: #10131a;
-  --player: #2563eb;
-  --accent: #4f46e5;
-  --accent-contrast: #ffffff;
-  --danger: #dc2626;
-  --danger-bg: #fdecec;
-  --ring: #6366f1;
-  --sel-bg: #e0e7ff;
-  --peer-bg: #eef1f8;
-  --shadow-sm: 0 1px 2px rgba(16, 19, 26, 0.06), 0 1px 3px rgba(16, 19, 26, 0.08);
-  --shadow-md: 0 8px 24px -6px rgba(16, 19, 26, 0.16), 0 2px 6px rgba(16, 19, 26, 0.08);
+  /* --- 背景・テキスト --- */
+  --bg: #0a0c12;
+  --text: rgba(237, 242, 249, 0.92);
+  --text-muted: rgba(237, 242, 249, 0.55);
+  --text-faint: rgba(237, 242, 249, 0.38);
+
+  /* --- ガラス面 --- */
+  --glass-bg: rgba(255, 255, 255, 0.06);
+  --glass-bg-strong: rgba(255, 255, 255, 0.09);
+  --glass-border: rgba(255, 255, 255, 0.08);
+  --glass-border-strong: rgba(255, 255, 255, 0.16);
+  --glass-blur: blur(16px);
+
+  /* --- 機能色 (これ以外の彩色禁止) --- */
+  --ice: #a9c8e8; /* 氷青: 選択・focus */
+  --ice-dim: rgba(169, 200, 232, 0.35);
+  --danger: #f0868a; /* 柔らかい赤: 誤答 */
+
+  /* --- 発光 shadow --- */
+  --glow-soft: 0 0 24px rgba(255, 255, 255, 0.05), 0 8px 32px rgba(0, 0, 0, 0.45);
+  --glow-card:
+    0 0 0 1px var(--glass-border), 0 0 40px rgba(255, 255, 255, 0.06),
+    0 16px 48px rgba(0, 0, 0, 0.5);
+
+  /* --- Motion --- */
+  --ease-out-quart: cubic-bezier(0.25, 1, 0.5, 1);
+  --ease-out-expo: cubic-bezier(0.22, 1, 0.36, 1);
+  --ease-standard: cubic-bezier(0.4, 0, 0.2, 1);
 
   --sans: system-ui, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, 'Hiragino Kaku Gothic ProN',
     'Hiragino Sans', Meiryo, sans-serif;
   --mono: ui-monospace, 'SF Mono', Menlo, Consolas, monospace;
 
-  color-scheme: light dark;
+  color-scheme: dark;
   font-family: var(--sans);
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
   text-rendering: optimizeLegibility;
-}
-
-@media (prefers-color-scheme: dark) {
-  :root {
-    --bg: #0e0f14;
-    --bg-grad: radial-gradient(1200px 600px at 50% -10%, #171a24 0%, #0e0f14 55%);
-    --surface: #171923;
-    --surface-2: #1e212c;
-    --border: #2a2e3b;
-    --border-strong: #454b5e;
-    --text: #e6e8ef;
-    --text-muted: #99a0b0;
-    --given: #f2f4f9;
-    --player: #7aa2ff;
-    --accent: #6366f1;
-    --accent-contrast: #ffffff;
-    --danger: #f87171;
-    --danger-bg: #3a1d1d;
-    --ring: #818cf8;
-    --sel-bg: #2b3358;
-    --peer-bg: #20242f;
-    --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.4);
-    --shadow-md: 0 10px 30px -8px rgba(0, 0, 0, 0.6), 0 2px 8px rgba(0, 0, 0, 0.4);
-  }
 }
 
 * {
@@ -64,8 +52,55 @@ body {
   margin: 0;
   min-height: 100svh;
   background: var(--bg);
-  background-image: var(--bg-grad);
   color: var(--text);
+  overflow-x: hidden;
+}
+
+/* 背景: 白い放射グロー + 淡いもや (多層 radial-gradient)。ゆっくり漂う。 */
+body::before {
+  content: '';
+  position: fixed;
+  inset: -20%;
+  z-index: -2;
+  pointer-events: none;
+  background:
+    radial-gradient(46% 38% at 50% 42%, rgba(255, 255, 255, 0.085) 0%, transparent 70%),
+    radial-gradient(30% 24% at 36% 30%, rgba(200, 216, 240, 0.05) 0%, transparent 70%),
+    radial-gradient(36% 30% at 66% 60%, rgba(255, 255, 255, 0.04) 0%, transparent 70%),
+    radial-gradient(60% 50% at 50% 90%, rgba(150, 170, 205, 0.03) 0%, transparent 70%);
+  animation: mist-drift 36s var(--ease-standard) infinite alternate;
+  will-change: transform;
+}
+
+/* vignette: 画面端をそっと沈める。 */
+body::after {
+  content: '';
+  position: fixed;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+  background: radial-gradient(120% 100% at 50% 45%, transparent 55%, rgba(2, 3, 6, 0.55) 100%);
+}
+
+@keyframes mist-drift {
+  from {
+    transform: translate3d(-1.5%, -1%, 0) scale(1);
+  }
+  to {
+    transform: translate3d(1.5%, 1.5%, 0) scale(1.06);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  body::before {
+    animation: none;
+  }
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
 }
 
 button {
@@ -74,8 +109,8 @@ button {
 }
 
 :focus-visible {
-  outline: 2px solid var(--ring);
-  outline-offset: 2px;
+  outline: 2px solid var(--ice-dim);
+  outline-offset: 3px;
 }
 
 /* --- レイアウト --- */
@@ -98,11 +133,13 @@ button {
 .start-card {
   width: 100%;
   max-width: 380px;
-  background: var(--surface);
-  border: 1px solid var(--border);
+  background: var(--glass-bg);
+  border: 1px solid var(--glass-border);
   border-radius: 20px;
-  box-shadow: var(--shadow-md);
-  padding: 40px 28px 32px;
+  backdrop-filter: var(--glass-blur);
+  -webkit-backdrop-filter: var(--glass-blur);
+  box-shadow: var(--glow-card);
+  padding: 44px 28px 36px;
   text-align: center;
   display: flex;
   flex-direction: column;
@@ -110,71 +147,90 @@ button {
   gap: 12px;
 }
 
+/* ブランドマーク: 白発光のガラス片 1 枚 (旧 3 色ダイヤは廃止)。 */
 .brand-mark {
-  display: flex;
-  gap: 6px;
-  margin-bottom: 4px;
+  margin-bottom: 8px;
 }
 .mark-face {
-  width: 22px;
-  height: 22px;
-  border-radius: 6px;
+  display: block;
+  width: 26px;
+  height: 26px;
+  border-radius: 7px;
   transform: rotate(45deg);
-  box-shadow: var(--shadow-sm);
+  background: linear-gradient(135deg, rgba(255, 255, 255, 0.22), rgba(255, 255, 255, 0.05));
+  border: 1px solid var(--glass-border-strong);
+  box-shadow: 0 0 20px rgba(255, 255, 255, 0.12), inset 0 0 10px rgba(255, 255, 255, 0.08);
 }
 
 .title {
   margin: 0;
-  font-size: 34px;
-  font-weight: 800;
-  letter-spacing: 0.14em;
-  color: var(--text);
+  font-size: 32px;
+  font-weight: 700;
+  letter-spacing: 0.3em;
+  margin-right: -0.3em; /* letter-spacing の右余白を光学補正 */
+  color: rgba(255, 255, 255, 0.94);
+  text-shadow: 0 0 24px rgba(255, 255, 255, 0.35);
 }
 .lede {
   margin: 0;
   color: var(--text-muted);
-  font-size: 15px;
-  line-height: 1.6;
+  font-size: 14px;
+  line-height: 1.7;
 }
 .hint-text {
   margin: 4px 0 0;
-  font-size: 12.5px;
-  color: var(--text-muted);
+  font-size: 12px;
+  color: var(--text-faint);
 }
 
-/* --- ボタン --- */
+/* --- ボタン: 白発光 (ホバーでグロー増) --- */
 .btn-primary {
-  margin-top: 8px;
-  border: none;
+  margin-top: 10px;
+  border: 1px solid var(--glass-border-strong);
   border-radius: 12px;
-  padding: 13px 28px;
-  font-size: 16px;
-  font-weight: 700;
-  color: var(--accent-contrast);
-  background: var(--accent);
-  box-shadow: var(--shadow-sm);
-  transition: transform 0.08s ease, filter 0.15s ease;
+  padding: 13px 32px;
+  font-size: 15px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  color: rgba(255, 255, 255, 0.95);
+  background: var(--glass-bg-strong);
+  backdrop-filter: var(--glass-blur);
+  -webkit-backdrop-filter: var(--glass-blur);
+  box-shadow: 0 0 16px rgba(255, 255, 255, 0.07), inset 0 1px 0 rgba(255, 255, 255, 0.1);
+  transition:
+    background-color 100ms var(--ease-standard),
+    border-color 100ms var(--ease-standard),
+    box-shadow 200ms var(--ease-out-quart),
+    transform 50ms var(--ease-standard);
 }
 .btn-primary:hover {
-  filter: brightness(1.08);
+  background: rgba(255, 255, 255, 0.14);
+  border-color: rgba(255, 255, 255, 0.28);
+  box-shadow: 0 0 32px rgba(255, 255, 255, 0.16), inset 0 1px 0 rgba(255, 255, 255, 0.14);
 }
 .btn-primary:active {
   transform: translateY(1px) scale(0.99);
 }
 
 .btn-ghost {
-  border: 1px solid var(--border);
-  background: var(--surface);
+  border: 1px solid var(--glass-border);
+  background: var(--glass-bg);
+  backdrop-filter: var(--glass-blur);
+  -webkit-backdrop-filter: var(--glass-blur);
   color: var(--text-muted);
   border-radius: 10px;
   padding: 8px 14px;
   font-size: 13px;
-  font-weight: 600;
-  transition: color 0.15s ease, border-color 0.15s ease;
+  font-weight: 500;
+  transition:
+    color 100ms var(--ease-standard),
+    border-color 100ms var(--ease-standard),
+    box-shadow 200ms var(--ease-out-quart);
 }
 .btn-ghost:hover {
   color: var(--text);
-  border-color: var(--border-strong);
+  border-color: var(--glass-border-strong);
+  box-shadow: 0 0 16px rgba(255, 255, 255, 0.08);
 }
 
 /* --- HUD --- */
@@ -187,9 +243,11 @@ button {
   flex: 0 0 auto;
 }
 .hud-logo {
-  font-weight: 800;
-  letter-spacing: 0.12em;
-  font-size: 16px;
+  font-weight: 600;
+  letter-spacing: 0.24em;
+  font-size: 14px;
+  color: rgba(255, 255, 255, 0.85);
+  text-shadow: 0 0 16px rgba(255, 255, 255, 0.3);
 }
 .hud-stats {
   flex: 1;
@@ -203,21 +261,24 @@ button {
   align-items: center;
   min-width: 64px;
   padding: 6px 12px;
-  background: var(--surface);
-  border: 1px solid var(--border);
+  background: var(--glass-bg);
+  border: 1px solid var(--glass-border);
   border-radius: 12px;
-  box-shadow: var(--shadow-sm);
+  backdrop-filter: var(--glass-blur);
+  -webkit-backdrop-filter: var(--glass-blur);
+  box-shadow: var(--glow-soft);
 }
 .stat-label {
-  font-size: 10.5px;
+  font-size: 10px;
   text-transform: uppercase;
-  letter-spacing: 0.08em;
-  color: var(--text-muted);
+  letter-spacing: 0.12em;
+  color: var(--text-faint);
 }
 .stat-value {
-  font-size: 20px;
-  font-weight: 700;
-  line-height: 1.1;
+  font-size: 19px;
+  font-weight: 600;
+  line-height: 1.15;
+  color: var(--text);
 }
 .stat-value.bad {
   color: var(--danger);
@@ -227,47 +288,9 @@ button {
   font-variant-numeric: tabular-nums;
 }
 
-/* --- 面タブ --- */
-.face-tabs {
-  display: grid;
-  grid-template-columns: repeat(6, 1fr);
-  gap: 6px;
-}
-.face-tab {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 2px;
-  padding: 8px 0 6px;
-  border: 1px solid var(--border);
-  background: var(--surface);
-  border-radius: 10px;
-  transition: border-color 0.12s ease, background 0.12s ease, transform 0.08s ease;
-}
-.face-tab:hover {
-  border-color: var(--border-strong);
-}
-.face-tab.active {
-  border-color: var(--accent);
-  background: var(--sel-bg);
-}
-.face-dot {
-  width: 10px;
-  height: 10px;
-  border-radius: 50%;
-}
-.face-id {
-  font-size: 15px;
-  font-weight: 700;
-  color: var(--text);
-}
-.face-jp {
-  font-size: 10px;
-  color: var(--text-muted);
-}
-
 /* --- 3D キューブ盤面 --- */
 .cube-area {
+  position: relative;
   width: 100%;
   height: min(88vw, 520px);
   border-radius: 16px;
@@ -278,113 +301,29 @@ button {
 .cube-area:active {
   cursor: grabbing;
 }
+/* キューブ背後の放射グロー (canvas は透過なので下に敷く)。 */
+.cube-area::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+  background:
+    radial-gradient(42% 42% at 50% 50%, rgba(255, 255, 255, 0.12) 0%, transparent 68%),
+    radial-gradient(65% 65% at 50% 52%, rgba(200, 216, 240, 0.06) 0%, transparent 75%);
+}
 
 /* --- HUD 正面 face バッジ --- */
 .stat-value.front-face {
   display: flex;
   align-items: center;
   gap: 5px;
-  font-size: 18px;
+  font-size: 17px;
 }
 .front-face-jp {
   font-size: 11px;
-  font-weight: 600;
+  font-weight: 500;
   color: var(--text-muted);
-}
-
-/* --- 盤面 (9×9) --- */
-.board-area {
-  display: flex;
-  justify-content: center;
-}
-.facegrid {
-  width: min(88vw, 512px);
-  aspect-ratio: 1;
-  display: grid;
-  grid-template-columns: repeat(9, 1fr);
-  grid-template-rows: repeat(9, 1fr);
-  background: var(--surface);
-  border: 2.5px solid var(--border-strong);
-  border-radius: 12px;
-  overflow: hidden;
-  box-shadow: var(--shadow-md);
-  user-select: none;
-}
-.cell {
-  border: 0;
-  border-right: 1px solid var(--border);
-  border-bottom: 1px solid var(--border);
-  background: var(--surface);
-  color: var(--player);
-  font-size: clamp(16px, 5vw, 26px);
-  font-weight: 600;
-  font-variant-numeric: tabular-nums;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: 0;
-  transition: background 0.1s ease;
-}
-.cell:nth-child(9n) {
-  border-right: 0;
-}
-.cell:nth-child(n + 73) {
-  border-bottom: 0;
-}
-.cell.block-r {
-  border-right: 2.5px solid var(--border-strong);
-}
-.cell.block-b {
-  border-bottom: 2.5px solid var(--border-strong);
-}
-.cell.given {
-  color: var(--given);
-  font-weight: 800;
-  cursor: default;
-}
-.cell.empty {
-  color: transparent;
-}
-.cell.peer:not(.given) {
-  background: var(--peer-bg);
-}
-.cell.peer.given {
-  background: var(--peer-bg);
-}
-.cell.same-num {
-  background: var(--sel-bg);
-}
-.cell.selected {
-  background: var(--sel-bg);
-  box-shadow: inset 0 0 0 2px var(--accent);
-}
-.cell.wrong {
-  color: var(--danger) !important;
-  background: var(--danger-bg) !important;
-  animation: shake 0.4s cubic-bezier(0.36, 0.07, 0.19, 0.97);
-}
-.cell:disabled {
-  cursor: default;
-}
-
-@keyframes shake {
-  10%,
-  90% {
-    transform: translateX(-2px);
-  }
-  20%,
-  80% {
-    transform: translateX(3px);
-  }
-  30%,
-  50%,
-  70% {
-    transform: translateX(-5px);
-  }
-  40%,
-  60% {
-    transform: translateX(5px);
-  }
 }
 
 /* --- 数字パッド --- */
@@ -397,24 +336,32 @@ button {
 }
 .pad-key {
   aspect-ratio: 1;
-  border: 1px solid var(--border);
-  background: var(--surface);
+  border: 1px solid var(--glass-border);
+  background: var(--glass-bg);
+  backdrop-filter: var(--glass-blur);
+  -webkit-backdrop-filter: var(--glass-blur);
   border-radius: 12px;
-  font-size: clamp(18px, 5.5vw, 24px);
-  font-weight: 700;
+  font-size: clamp(18px, 5.5vw, 22px);
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
   color: var(--text);
-  box-shadow: var(--shadow-sm);
-  transition: transform 0.07s ease, background 0.12s ease, border-color 0.12s ease;
+  box-shadow: var(--glow-soft);
+  transition:
+    background-color 100ms var(--ease-standard),
+    border-color 100ms var(--ease-standard),
+    box-shadow 200ms var(--ease-out-quart),
+    transform 50ms var(--ease-standard);
 }
 .pad-key:hover:not(:disabled) {
-  border-color: var(--accent);
-  background: var(--sel-bg);
+  background: var(--glass-bg-strong);
+  border-color: var(--glass-border-strong);
+  box-shadow: 0 0 20px rgba(255, 255, 255, 0.1);
 }
 .pad-key:active:not(:disabled) {
   transform: translateY(1px) scale(0.97);
 }
 .pad-key:disabled {
-  opacity: 0.4;
+  opacity: 0.35;
   cursor: not-allowed;
 }
 .pad-erase {
@@ -425,38 +372,47 @@ button {
 .overlay {
   position: fixed;
   inset: 0;
-  background: rgba(10, 12, 18, 0.55);
-  backdrop-filter: blur(4px);
+  background: rgba(6, 8, 13, 0.6);
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
   display: flex;
   align-items: center;
   justify-content: center;
   padding: 20px;
-  animation: fade 0.2s ease;
+  animation: fade 200ms var(--ease-standard);
   z-index: 10;
 }
 .result-card {
   width: 100%;
   max-width: 340px;
-  background: var(--surface);
-  border: 1px solid var(--border);
+  background: var(--glass-bg-strong);
+  border: 1px solid var(--glass-border-strong);
   border-radius: 20px;
-  box-shadow: var(--shadow-md);
-  padding: 32px 28px;
+  backdrop-filter: var(--glass-blur);
+  -webkit-backdrop-filter: var(--glass-blur);
+  box-shadow: var(--glow-card);
+  padding: 34px 28px;
   text-align: center;
   display: flex;
   flex-direction: column;
   align-items: center;
   gap: 12px;
-  animation: pop 0.28s cubic-bezier(0.2, 0.9, 0.3, 1.3);
+  animation: pop 200ms var(--ease-out-expo);
 }
 .result-badge {
-  font-size: 44px;
-  line-height: 1;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.9);
+  box-shadow: 0 0 24px rgba(255, 255, 255, 0.6), 0 0 60px rgba(255, 255, 255, 0.25);
+  margin-bottom: 4px;
 }
 .result-title {
   margin: 0;
-  font-size: 24px;
-  font-weight: 800;
+  font-size: 22px;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-shadow: 0 0 20px rgba(255, 255, 255, 0.3);
 }
 .score-ring {
   display: flex;
@@ -466,13 +422,14 @@ button {
 }
 .score-num {
   font-size: 56px;
-  font-weight: 800;
-  color: var(--accent);
+  font-weight: 700;
+  color: rgba(255, 255, 255, 0.95);
+  text-shadow: 0 0 32px rgba(255, 255, 255, 0.4);
   line-height: 1;
   font-variant-numeric: tabular-nums;
 }
 .score-max {
-  font-size: 16px;
+  font-size: 15px;
   color: var(--text-muted);
 }
 .result-stats {
@@ -486,15 +443,16 @@ button {
   gap: 2px;
 }
 .result-stats dt {
-  font-size: 11px;
+  font-size: 10.5px;
   text-transform: uppercase;
-  letter-spacing: 0.06em;
-  color: var(--text-muted);
+  letter-spacing: 0.1em;
+  color: var(--text-faint);
 }
 .result-stats dd {
   margin: 0;
-  font-size: 22px;
-  font-weight: 700;
+  font-size: 21px;
+  font-weight: 600;
+  color: var(--text);
 }
 
 @keyframes fade {

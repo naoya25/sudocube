@@ -11,14 +11,14 @@ import { CubeBoard } from './three/CubeBoard';
 import { moveSelection, type ArrowKey, type CellRef } from './three/selection';
 import { NumberPad } from './components/NumberPad';
 
-/** 面の表示メタ (スタート画面のブランドマーク・正面 face バッジに使う)。 */
-const FACE_META: Record<FaceId, { jp: string; color: string }> = {
-  U: { jp: '上', color: '#f5b301' },
-  D: { jp: '下', color: '#8b5cf6' },
-  F: { jp: '前', color: '#3b82f6' },
-  B: { jp: '後', color: '#ef4444' },
-  L: { jp: '左', color: '#10b981' },
-  R: { jp: '右', color: '#ec4899' },
+/** 面の表示メタ (正面 face バッジに使う)。モノクローム方針のため色は持たない。 */
+const FACE_META: Record<FaceId, { jp: string }> = {
+  U: { jp: '上' },
+  D: { jp: '下' },
+  F: { jp: '前' },
+  B: { jp: '後' },
+  L: { jp: '左' },
+  R: { jp: '右' },
 };
 
 function fmtTime(ms: number): string {
@@ -148,9 +148,7 @@ function App() {
       <div className="app start">
         <div className="start-card">
           <div className="brand-mark" aria-hidden="true">
-            {(['U', 'F', 'R'] as FaceId[]).map((f) => (
-              <span key={f} className="mark-face" style={{ background: FACE_META[f].color }} />
-            ))}
+            <span className="mark-face" />
           </div>
           <h1 className="title">SUDOCUBE</h1>
           <p className="lede">立方体 6 面の数独。キューブを回して全面を解こう。</p>
@@ -184,7 +182,6 @@ function App() {
           <div className="stat" title="カメラに正対している面">
             <span className="stat-label">正面</span>
             <span className="stat-value front-face">
-              <span className="face-dot" style={{ background: FACE_META[front.face].color }} />
               {front.face}
               <span className="front-face-jp">{FACE_META[front.face].jp}</span>
             </span>
@@ -211,7 +208,7 @@ function App() {
       {result && (
         <div className="overlay" role="dialog" aria-modal="true" aria-label="結果">
           <div className="result-card">
-            <div className="result-badge" aria-hidden="true">🎉</div>
+            <div className="result-badge" aria-hidden="true" />
             <h2 className="result-title">クリア！</h2>
             <div className="score-ring">
               <span className="score-num">{result.score}</span>

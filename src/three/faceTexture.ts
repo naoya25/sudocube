@@ -2,6 +2,10 @@
 // 9×9 グリッド・ハイライトレイヤー・数字 (given / プレイヤー入力) を描く。
 // グリフは uprightDeg だけセル中心で回して「画面に対して正立」させる
 // (角度は orientation.ts のテーブルから引く)。
+//
+// ビジュアル: エセリアル・すりガラス — 闇に浮かぶ白く発光するフロストガラス。
+// 面は中心がわずかに明るい白のラジアルグラデ + 辺への白にじみで「内側から光る」印象。
+// 色はモノクローム基調、機能色は氷青 (選択系) と柔らかい赤 (誤答) の 2 つだけ。
 
 import type { Board, FaceId } from '../core/board';
 import { cellUV } from './orientation';
@@ -9,27 +13,27 @@ import { FLAG_SAME, FLAG_SELECTED, FLAG_WRONG } from './selection';
 
 export const TEXTURE_SIZE = 1024;
 
-// 面をパッと見分けるための淡い下地色 (index.css のトーンに合わせた淡色)。
-const FACE_TINT: Record<FaceId, string> = {
-  U: '#f3f6e8',
-  D: '#ece8f6',
-  F: '#f6f2e4',
-  B: '#e4eef6',
-  L: '#f6e8e8',
-  R: '#e8f6ef',
-};
+// すりガラスの下地 (中心 → 縁)。ごくわずかに青みの入った白。
+const GLASS_CENTER = '#f4f7fc';
+const GLASS_EDGE = '#dfe5ee';
 
-const GRID_COLOR = '#8a8577';
-const BOX_COLOR = '#3d3a30';
-const GIVEN_COLOR = '#1d1b16';
-const PLAYER_COLOR = '#2563eb'; // index.css --player (light)
-const ACCENT = '#4f46e5'; // index.css --accent (light)
+// グリッドは低コントラストのグレー (数字より必ず弱く)。
+const GRID_COLOR = 'rgba(96, 108, 130, 0.26)';
+const BOX_COLOR = 'rgba(58, 68, 88, 0.58)';
 
-// ハイライトは面下地色の上に半透明オーバーレイで重ねる (優先度: WRONG > SELECTED > SAME > PEER)。
-const OVERLAY_PEER = 'rgba(79, 70, 229, 0.10)';
-const OVERLAY_SAME = 'rgba(79, 70, 229, 0.24)';
-const OVERLAY_SELECTED = 'rgba(79, 70, 229, 0.32)';
-const OVERLAY_WRONG = 'rgba(220, 38, 38, 0.42)';
+// 数字インク: given は濃色、プレイヤー入力は青系インク (可読性最優先)。
+const GIVEN_COLOR = '#1e232d';
+const PLAYER_COLOR = '#2f6398';
+
+// 選択枠 = 氷青 (desaturated ice blue)。
+const ACCENT = '#5a8fc4';
+
+// ハイライトは下地の上に半透明オーバーレイ (優先度: WRONG > SELECTED > SAME > PEER)。
+// 選択系は氷青、誤答は柔らかい赤。
+const OVERLAY_PEER = 'rgba(122, 160, 204, 0.14)';
+const OVERLAY_SAME = 'rgba(122, 160, 204, 0.30)';
+const OVERLAY_SELECTED = 'rgba(122, 160, 204, 0.38)';
+const OVERLAY_WRONG = 'rgba(224, 108, 112, 0.45)';
 
 export interface DrawFaceOptions {
   face: FaceId;
@@ -49,8 +53,29 @@ export function drawFace(ctx: CanvasRenderingContext2D, opts: DrawFaceOptions): 
   const cellSize = S / 9;
 
   ctx.resetTransform();
-  ctx.fillStyle = FACE_TINT[face];
+
+  // 下地: 中心がわずかに明るいラジアルグラデ (内側から光っている印象)。
+  const base = ctx.createRadialGradient(S / 2, S / 2, S * 0.1, S / 2, S / 2, S * 0.75);
+  base.addColorStop(0, GLASS_CENTER);
+  base.addColorStop(1, GLASS_EDGE);
+  ctx.fillStyle = base;
   ctx.fillRect(0, 0, S, S);
+
+  // 辺への白にじみ: 4 辺から内側へ溶ける白のグラデ (フロストガラスの光の縁)。
+  const bloom = S * 0.05;
+  const edges: [number, number, number, number][] = [
+    [0, 0, 0, bloom], // top
+    [0, S, 0, S - bloom], // bottom
+    [0, 0, bloom, 0], // left
+    [S, 0, S - bloom, 0], // right
+  ];
+  for (const [x0, y0, x1, y1] of edges) {
+    const g = ctx.createLinearGradient(x0, y0, x1, y1);
+    g.addColorStop(0, 'rgba(255, 255, 255, 0.85)');
+    g.addColorStop(1, 'rgba(255, 255, 255, 0)');
+    ctx.fillStyle = g;
+    ctx.fillRect(0, 0, S, S);
+  }
 
   // セル位置は cellUV (core 幾何の射影) から引く。グリッド線はセル中心の中間に引くため
   // まず 81 セルの中心を求め、テクスチャの向きは cellUV に任せる。
@@ -83,7 +108,7 @@ export function drawFace(ctx: CanvasRenderingContext2D, opts: DrawFaceOptions): 
   for (let k = 0; k <= 9; k++) {
     const isBox = k % 3 === 0;
     ctx.strokeStyle = isBox ? BOX_COLOR : GRID_COLOR;
-    ctx.lineWidth = isBox ? 8 : 2;
+    ctx.lineWidth = isBox ? 6 : 2;
     const t = (k / 9) * S;
     ctx.beginPath();
     ctx.moveTo(t, 0);
@@ -93,7 +118,7 @@ export function drawFace(ctx: CanvasRenderingContext2D, opts: DrawFaceOptions): 
     ctx.stroke();
   }
 
-  // 選択セルの枠 (グリッド線より上)。
+  // 選択セルの枠 (グリッド線より上)。氷青。
   if (flags) {
     ctx.strokeStyle = ACCENT;
     ctx.lineWidth = 10;
@@ -104,7 +129,7 @@ export function drawFace(ctx: CanvasRenderingContext2D, opts: DrawFaceOptions): 
     }
   }
 
-  // 数字。セル中心で uprightDeg 回転して描く。given は濃色、プレイヤー入力は青。
+  // 数字。セル中心で uprightDeg 回転して描く。given は濃色インク、プレイヤー入力は青インク。
   ctx.font = `600 ${Math.round(cellSize * 0.62)}px "Helvetica Neue", Arial, sans-serif`;
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
