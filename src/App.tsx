@@ -1,17 +1,17 @@
-// Sudocube 最小ゲーム UI (P1.5: 平面・1 面表示)。
+// Sudocube ゲーム UI (P2: 3D キューブ盤面)。
 // ゲームロジックは src/core/session.ts をそのまま使う (再実装しない)。
-// 状態管理 (このファイル) と描画 (FaceGrid / NumberPad) を分離してあるので、
-// P2 で 3D キューブの正面に drei <Html> で盤面を載せ替えても presentational は再利用できる。
+// 盤面ビューは 3D キューブ (CubeBoard) が唯一。面切替タブは廃止し、
+// ドラッグ回転 + 24 姿勢スナップで見る面を変える。
 
 import { useCallback, useEffect, useReducer, useRef, useState } from 'react';
-import { FACES } from './core/board';
 import type { FaceId } from './core/board';
 import { eraseCell, elapsedMs, inputCell, newGame, score } from './core/session';
 import type { Session } from './core/session';
-import { FaceGrid } from './components/FaceGrid';
+import { CubeBoard } from './three/CubeBoard';
+import { moveSelection, type ArrowKey, type CellRef } from './three/selection';
 import { NumberPad } from './components/NumberPad';
 
-/** 面の表示メタ (P2 の 3D 回転の代わりに面を切り替えるタブに使う)。 */
+/** 面の表示メタ (スタート画面のブランドマーク・正面 face バッジに使う)。 */
 const FACE_META: Record<FaceId, { jp: string; color: string }> = {
   U: { jp: '上', color: '#f5b301' },
   D: { jp: '下', color: '#8b5cf6' },
@@ -36,29 +36,29 @@ interface Result {
 
 function App() {
   const [session, setSession] = useState<Session | null>(null);
-  const [face, setFace] = useState<FaceId>('F');
-  const [selected, setSelected] = useState<number | null>(null);
-  const [wrongCell, setWrongCell] = useState<number | null>(null);
+  const [selected, setSelected] = useState<CellRef | null>(null);
+  const [wrongCell, setWrongCell] = useState<CellRef | null>(null);
+  // 正面 face (カメラに最も正対している面) とその正立角。CubeBoard のスナップ確定で更新。
+  const [front, setFront] = useState<{ face: FaceId; deg: number }>({ face: 'F', deg: 0 });
   const [now, setNow] = useState<number>(() => Date.now());
   const [result, setResult] = useState<Result | null>(null);
   // session はミュータブル (inputCell が破壊的更新) なので、参照は変えず強制再描画で反映する。
-  const [, bump] = useReducer((x: number) => x + 1, 0);
+  // version は CubeBoard へ渡して盤面テクスチャの再焼きトリガーにも使う。
+  const [version, bump] = useReducer((x: number) => x + 1, 0);
   const wrongTimer = useRef<number | null>(null);
   const restartBtnRef = useRef<HTMLButtonElement>(null);
 
   const startGame = useCallback(() => {
     const seed = Math.floor(Math.random() * 2 ** 32);
     setSession(newGame(seed, Date.now()));
-    setFace('F');
     setSelected(null);
     setWrongCell(null);
     setResult(null);
     setNow(Date.now());
+    bump();
   }, []);
 
   // 経過タイム: playing 中だけ 250ms ごとに now を更新する。
-  // session はミュータブルで参照が変わらないため、status 遷移 (勝利) を dep に含めて
-  // 勝利時にこの effect を再実行させ、interval を確実に止める。
   useEffect(() => {
     if (!session || session.status !== 'playing') return;
     const id = window.setInterval(() => setNow(Date.now()), 250);
@@ -70,16 +70,16 @@ function App() {
     if (wrongTimer.current) window.clearTimeout(wrongTimer.current);
   }, []);
 
-  const flashWrong = useCallback((i: number) => {
+  const flashWrong = useCallback((ref: CellRef) => {
     if (wrongTimer.current) window.clearTimeout(wrongTimer.current);
-    setWrongCell(i);
+    setWrongCell(ref);
     wrongTimer.current = window.setTimeout(() => setWrongCell(null), 450);
   }, []);
 
   const handleInput = useCallback(
     (value: number) => {
-      if (!session || session.status !== 'playing' || selected === null) return;
-      const res = inputCell(session, face, selected, value);
+      if (!session || session.status !== 'playing' || !selected) return;
+      const res = inputCell(session, selected.face, selected.i, value);
       if (res.wrong) flashWrong(selected);
       bump();
       if (res.won) {
@@ -87,22 +87,20 @@ function App() {
         setResult({ score: score(session, t), ms: elapsedMs(session, t), mistakes: session.mistakes });
       }
     },
-    [session, face, selected, flashWrong],
+    [session, selected, flashWrong],
   );
 
   const handleErase = useCallback(() => {
-    if (!session || session.status !== 'playing' || selected === null) return;
-    eraseCell(session, face, selected);
+    if (!session || session.status !== 'playing' || !selected) return;
+    eraseCell(session, selected.face, selected.i);
     bump();
-  }, [session, face, selected]);
+  }, [session, selected]);
 
-  const switchFace = useCallback((f: FaceId) => {
-    setFace(f);
-    setSelected(null);
-    setWrongCell(null);
+  const handleFrontFaceChange = useCallback((face: FaceId, deg: number) => {
+    setFront({ face, deg });
   }, []);
 
-  // キーボード操作 (数字入力・消去・矢印移動)。craft 用の補助。
+  // キーボード操作 (数字入力・消去・矢印移動)。矢印は正面 face 内を画面方向で移動する。
   useEffect(() => {
     if (!session || session.status !== 'playing') return;
     const onKey = (e: KeyboardEvent) => {
@@ -111,23 +109,21 @@ function App() {
       } else if (e.key === 'Backspace' || e.key === 'Delete' || e.key === '0') {
         handleErase();
       } else if (e.key.startsWith('Arrow')) {
-        if (selected === null) {
-          setSelected(40); // 未選択なら中央から。キーボードのみでも遊べる。
+        if (!selected || selected.face !== front.face) {
+          // 未選択、または選択が正面以外の面にあるときは正面 face の中央から。
+          setSelected({ face: front.face, i: 40 });
         } else {
-          let r = Math.floor(selected / 9);
-          let c = selected % 9;
-          if (e.key === 'ArrowUp') r = Math.max(0, r - 1);
-          else if (e.key === 'ArrowDown') r = Math.min(8, r + 1);
-          else if (e.key === 'ArrowLeft') c = Math.max(0, c - 1);
-          else if (e.key === 'ArrowRight') c = Math.min(8, c + 1);
-          setSelected(r * 9 + c);
+          setSelected({
+            face: front.face,
+            i: moveSelection(front.face, selected.i, e.key as ArrowKey, front.deg),
+          });
         }
         e.preventDefault();
       }
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [session, selected, handleInput, handleErase]);
+  }, [session, selected, front, handleInput, handleErase]);
 
   // 結果 dialog が開いたら「もう一度」にフォーカスを移し、Escape で再スタートできるように。
   useEffect(() => {
@@ -157,18 +153,18 @@ function App() {
             ))}
           </div>
           <h1 className="title">SUDOCUBE</h1>
-          <p className="lede">立方体 6 面の数独。まずは 1 面から解いてみよう。</p>
+          <p className="lede">立方体 6 面の数独。キューブを回して全面を解こう。</p>
           <button type="button" className="btn-primary" onClick={startGame}>
             ゲームを始める
           </button>
-          <p className="hint-text">セルを選んで数字パッド、または 1〜9 / ⌫ キーで入力</p>
+          <p className="hint-text">ドラッグで回転 / セルを選んで数字パッドか 1〜9 / ⌫ キーで入力</p>
         </div>
       </div>
     );
   }
 
   const won = session.status === 'won';
-  const canInput = selected !== null && session.puzzle.givens[face][selected] !== 1 && !won;
+  const canInput = selected !== null && session.puzzle.givens[selected.face][selected.i] !== 1 && !won;
 
   return (
     <div className="app">
@@ -185,36 +181,28 @@ function App() {
             <span className="stat-label">タイム</span>
             <span className="stat-value mono">{fmtTime(elapsedMs(session, now))}</span>
           </div>
+          <div className="stat" title="カメラに正対している面">
+            <span className="stat-label">正面</span>
+            <span className="stat-value front-face">
+              <span className="face-dot" style={{ background: FACE_META[front.face].color }} />
+              {front.face}
+              <span className="front-face-jp">{FACE_META[front.face].jp}</span>
+            </span>
+          </div>
         </div>
         <button type="button" className="btn-ghost" onClick={startGame}>
           新しいゲーム
         </button>
       </header>
 
-      <nav className="face-tabs" aria-label="面の切り替え">
-        {FACES.map((f) => (
-          <button
-            key={f}
-            type="button"
-            className={`face-tab${f === face ? ' active' : ''}`}
-            aria-pressed={f === face}
-            onClick={() => switchFace(f)}
-          >
-            <span className="face-dot" style={{ background: FACE_META[f].color }} />
-            <span className="face-id">{f}</span>
-            <span className="face-jp">{FACE_META[f].jp}</span>
-          </button>
-        ))}
-      </nav>
-
-      <main className="board-area">
-        <FaceGrid
-          values={Uint8Array.from(session.board.faces[face])}
-          givens={session.puzzle.givens[face]}
+      <main className="cube-area" aria-label="3D 盤面">
+        <CubeBoard
+          board={session.board}
           selected={selected}
           wrongCell={wrongCell}
+          boardVersion={version}
           onSelectCell={setSelected}
-          disabled={won}
+          onFrontFaceChange={handleFrontFaceChange}
         />
       </main>
 

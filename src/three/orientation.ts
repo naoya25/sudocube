@@ -153,6 +153,26 @@ export function snapTo90(deg: number): number {
   return ((Math.round(deg / 90) * 90) % 360 + 360) % 360;
 }
 
+/**
+ * 各スナップ姿勢で「カメラに最も正対している面」(= カメラ空間で法線 z が最大の面) の
+ * FACES index を precompute する。キーボード矢印移動の対象面や HUD 表示に使う。
+ */
+export function computeFrontFaces(cameraQuat: Quaternion): number[] {
+  const camInv = cameraQuat.clone().invert();
+  return POSES.map((pose) => {
+    let best = 0;
+    let bestZ = -Infinity;
+    FACES.forEach((face, fi) => {
+      const n = FACE_BASES[face].normal.clone().applyQuaternion(pose).applyQuaternion(camInv);
+      if (n.z > bestZ) {
+        bestZ = n.z;
+        best = fi;
+      }
+    });
+    return best;
+  });
+}
+
 export interface UprightTable {
   /** [poseIndex][faceIndex] (FACES 順) のスナップ済み正立角 (度)。 */
   angles: number[][];
