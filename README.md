@@ -10,7 +10,7 @@
 各面は9×9の数独として成立しつつ、**隣り合う面が辺で数字を共有する**。<br/>
 立方体を回しながら、6面すべてを同時に矛盾なく埋めきろう。
 
-🚧 **Play Now — Coming soon** &nbsp;·&nbsp; Vite + React + TypeScript
+🎮 **[Play Now](https://naoya25.github.io/sudocube/)** &nbsp;·&nbsp; Vite + React + TypeScript
 
 </div>
 

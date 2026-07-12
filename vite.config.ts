@@ -4,6 +4,8 @@ import react from '@vitejs/plugin-react'
 
 // https://vite.dev/config/
 export default defineConfig({
+  // GitHub Pages (https://naoya25.github.io/sudocube/) 配信用のサブパス
+  base: '/sudocube/',
   plugins: [react()],
   build: {
     rolldownOptions: {

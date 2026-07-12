@@ -11,7 +11,7 @@ English | [日本語](README.md)
 Each face is a valid 9×9 Sudoku, and **adjacent faces share the digits along their shared edge**.<br/>
 Rotate the cube and fill all six faces so that everything is consistent at once.
 
-🚧 **Play Now — Coming soon** &nbsp;·&nbsp; Vite + React + TypeScript
+🎮 **[Play Now](https://naoya25.github.io/sudocube/)** &nbsp;·&nbsp; Vite + React + TypeScript
 
 </div>
 
