@@ -23,8 +23,11 @@ import {
 } from './orientation';
 import { highlightFlags, uvToCell, type CellRef } from './selection';
 
-// カメラを少しオフセットして、スナップ姿勢でも正面 + 上/横の 2〜3 面が見えるようにする。
-const CAMERA_POSITION: [number, number, number] = [6, 5, 18];
+// カメラは真正面 (lookAt 原点で quaternion = 恒等)。スナップ静止時に正面の面が
+// 歪みなく完全に正対して見える。側面はドラッグ回転中にのみ見える。
+// 注: orientation.ts の正立角テーブルはこの恒等カメラでテスト済み
+// (edge-on 面の射影退化は uprightInfo 内の lengthSq ガードで 0° にフォールバック)。
+const CAMERA_POSITION: [number, number, number] = [0, 0, 18];
 
 const DRAG_SPEED = 0.008;
 const SNAP_RATE = 12; // slerp の吸着速度 (1/s)
