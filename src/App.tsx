@@ -14,6 +14,16 @@ import {
   toggleNote,
   type NotesMap,
 } from './core/notes';
+import {
+  addRecord,
+  clearCurrentGame,
+  loadCurrentGame,
+  loadRecords,
+  saveCurrentGame,
+  toSession,
+  type ClearRecord,
+  type SavedGame,
+} from './core/persistence';
 import { CubeBoard } from './three/CubeBoard';
 import { moveSelection, type ArrowKey, type CellRef } from './three/selection';
 import { NumberPad } from './components/NumberPad';
@@ -41,6 +51,16 @@ interface Result {
   mistakes: number;
 }
 
+function fmtDate(iso: string): string {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return '—';
+  const mm = String(d.getMonth() + 1).padStart(2, '0');
+  const dd = String(d.getDate()).padStart(2, '0');
+  const hh = String(d.getHours()).padStart(2, '0');
+  const mi = String(d.getMinutes()).padStart(2, '0');
+  return `${mm}/${dd} ${hh}:${mi}`;
+}
+
 function App() {
   const [session, setSession] = useState<Session | null>(null);
   const [selected, setSelected] = useState<CellRef | null>(null);
@@ -61,9 +81,17 @@ function App() {
   const [introActive, setIntroActive] = useState(false);
   const wrongTimer = useRef<number | null>(null);
   const restartBtnRef = useRef<HTMLButtonElement>(null);
+  // 履歴保存: スタート画面表示時に一度だけ localStorage から読む (壊れたデータは null / [])。
+  const [savedGame, setSavedGame] = useState<SavedGame | null>(() => loadCurrentGame());
+  const [records, setRecords] = useState<ClearRecord[]>(() => loadRecords());
+  // 現在のゲームの seed (戦績記録用)。復元時はセーブから引き継ぐ。
+  const seedRef = useRef<number | null>(null);
+  const saveTimer = useRef<number | null>(null);
 
   const startGame = useCallback(() => {
     const seed = Math.floor(Math.random() * 2 ** 32);
+    seedRef.current = seed;
+    setSavedGame(null); // 古いセーブは新ゲームの初回自動セーブで上書きされる
     setSession(newGame(seed, Date.now()));
     setSelected(null);
     setWrongCell(null);
@@ -75,6 +103,36 @@ function App() {
     bumpIntro();
     bump();
   }, []);
+
+  // 「続きから」: セーブから Session を再構築。startedAt は逆算 (離席中の時間は加算しない)。
+  const continueGame = useCallback(() => {
+    if (!savedGame) return;
+    const t = Date.now();
+    seedRef.current = savedGame.seed;
+    setSavedGame(null);
+    setSession(toSession(savedGame, t));
+    setSelected(null);
+    setWrongCell(null);
+    setNotes(savedGame.notes);
+    setNoteMode(false);
+    setResult(null);
+    setNow(t);
+    setIntroActive(true);
+    bumpIntro();
+    bump();
+  }, [savedGame]);
+
+  // 自動セーブ: 盤面 (version)・メモ・ミスが変わるたび 1s debounce で保存。
+  useEffect(() => {
+    if (!session || session.status !== 'playing') return;
+    if (saveTimer.current) window.clearTimeout(saveTimer.current);
+    saveTimer.current = window.setTimeout(() => {
+      saveCurrentGame(session, notes, seedRef.current, Date.now());
+    }, 1000);
+    return () => {
+      if (saveTimer.current) window.clearTimeout(saveTimer.current);
+    };
+  }, [session, version, notes]);
 
   // 経過タイム: playing 中だけ 250ms ごとに now を更新する。
   useEffect(() => {
@@ -122,6 +180,18 @@ function App() {
       if (res.won) {
         const t = Date.now();
         setResult({ score: score(session, t), ms: elapsedMs(session, t), mistakes: session.mistakes });
+        // クリア: 戦績に記録してから進行中セーブを削除する (順序が正本)。
+        if (saveTimer.current) window.clearTimeout(saveTimer.current);
+        setRecords(
+          addRecord({
+            clearedAt: new Date(t).toISOString(),
+            timeMs: elapsedMs(session, t),
+            mistakes: session.mistakes,
+            score: score(session, t),
+            seed: seedRef.current,
+          }),
+        );
+        clearCurrentGame();
       }
     },
     [session, selected, flashWrong, introActive, noteMode, handleNoteToggle],
@@ -197,6 +267,8 @@ function App() {
 
   // --- スタート画面 ---
   if (!session) {
+    const bestTimeMs = records.length > 0 ? Math.min(...records.map((r) => r.timeMs)) : null;
+    const bestIdx = bestTimeMs === null ? -1 : records.findIndex((r) => r.timeMs === bestTimeMs);
     return (
       <div className="app start">
         <div className="start-card">
@@ -205,13 +277,46 @@ function App() {
           </div>
           <h1 className="title">SUDOCUBE</h1>
           <p className="lede">立方体 6 面の数独。キューブを回して全面を解こう。</p>
-          <button type="button" className="btn-primary" onClick={startGame}>
-            ゲームを始める
+          {savedGame && (
+            <button type="button" className="btn-primary" onClick={continueGame}>
+              続きから
+              <span className="btn-sub mono">
+                {fmtTime(savedGame.elapsedMs)}・ミス {savedGame.mistakes}
+              </span>
+            </button>
+          )}
+          <button
+            type="button"
+            className={savedGame ? 'btn-secondary' : 'btn-primary'}
+            onClick={startGame}
+          >
+            {savedGame ? '新しいゲーム' : 'ゲームを始める'}
           </button>
           <p className="hint-text">
             ドラッグで回転 / セルを選んで数字パッドか 1〜9 / ⌫ キーで入力 / M でメモモード
           </p>
         </div>
+        {records.length > 0 && (
+          <section className="records-card" aria-label="クリア戦績">
+            <h2 className="records-title">戦績</h2>
+            <ol className="records-list">
+              {records.map((r, idx) => (
+                <li
+                  key={`${r.clearedAt}-${idx}`}
+                  className={`record-row${idx === bestIdx ? ' best' : ''}`}
+                >
+                  <span className="rec-date">{fmtDate(r.clearedAt)}</span>
+                  <span className="rec-time mono">
+                    {fmtTime(r.timeMs)}
+                    {idx === bestIdx && <span className="rec-best-tag">BEST</span>}
+                  </span>
+                  <span className="rec-miss">ミス {r.mistakes}</span>
+                  <span className="rec-score mono">{r.score}</span>
+                </li>
+              ))}
+            </ol>
+          </section>
+        )}
       </div>
     );
   }

@@ -212,6 +212,43 @@ button {
   transform: translateY(1px) scale(0.99);
 }
 
+/* btn-primary 内のサブテキスト (続きから: 経過タイム・ミス数) */
+.btn-sub {
+  display: block;
+  margin-top: 3px;
+  font-size: 11.5px;
+  font-weight: 500;
+  letter-spacing: 0.04em;
+  color: var(--text-muted);
+}
+
+/* セカンダリボタン: セーブがあるときの「新しいゲーム」。primary より控えめなガラス。 */
+.btn-secondary {
+  border: 1px solid var(--glass-border);
+  border-radius: 12px;
+  padding: 11px 28px;
+  font-size: 14px;
+  font-weight: 500;
+  letter-spacing: 0.04em;
+  color: var(--text-muted);
+  background: var(--glass-bg);
+  backdrop-filter: var(--glass-blur);
+  -webkit-backdrop-filter: var(--glass-blur);
+  transition:
+    color 100ms var(--ease-standard),
+    border-color 100ms var(--ease-standard),
+    box-shadow 200ms var(--ease-out-quart),
+    transform 50ms var(--ease-standard);
+}
+.btn-secondary:hover {
+  color: var(--text);
+  border-color: var(--glass-border-strong);
+  box-shadow: 0 0 16px rgba(255, 255, 255, 0.08);
+}
+.btn-secondary:active {
+  transform: translateY(1px) scale(0.99);
+}
+
 .btn-ghost {
   border: 1px solid var(--glass-border);
   background: var(--glass-bg);
@@ -469,6 +506,97 @@ button {
   font-size: 21px;
   font-weight: 600;
   color: var(--text);
+}
+
+/* --- クリア戦績リスト (スタート画面) --- */
+.records-card {
+  width: 100%;
+  max-width: 380px;
+  margin-top: 16px;
+  background: var(--glass-bg);
+  border: 1px solid var(--glass-border);
+  border-radius: 20px;
+  backdrop-filter: var(--glass-blur);
+  -webkit-backdrop-filter: var(--glass-blur);
+  box-shadow: var(--glow-card);
+  padding: 20px 22px;
+}
+.records-title {
+  margin: 0 0 10px;
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.2em;
+  color: var(--text-faint);
+  text-align: center;
+}
+.records-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  max-height: 240px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  /* スクロール端をそっとフェード */
+  mask-image: linear-gradient(to bottom, transparent 0, #000 8px, #000 calc(100% - 8px), transparent 100%);
+  -webkit-mask-image: linear-gradient(to bottom, transparent 0, #000 8px, #000 calc(100% - 8px), transparent 100%);
+}
+.record-row {
+  display: grid;
+  grid-template-columns: 1fr auto auto auto;
+  align-items: baseline;
+  gap: 12px;
+  padding: 7px 10px;
+  border-radius: 10px;
+  font-size: 13px;
+  color: var(--text-muted);
+}
+.record-row:nth-child(odd) {
+  background: rgba(255, 255, 255, 0.025);
+}
+/* ベストタイム: 白発光でハイライト (モノクローム方針)。 */
+.record-row.best {
+  background: rgba(255, 255, 255, 0.07);
+  border: 1px solid var(--glass-border-strong);
+  color: var(--text);
+  box-shadow: 0 0 14px rgba(255, 255, 255, 0.06);
+}
+.rec-date {
+  font-size: 11.5px;
+  color: var(--text-faint);
+  font-variant-numeric: tabular-nums;
+}
+.rec-time {
+  font-size: 13.5px;
+  font-weight: 600;
+  color: var(--text);
+  display: inline-flex;
+  align-items: baseline;
+  gap: 6px;
+}
+.record-row:not(.best) .rec-time {
+  color: var(--text-muted);
+}
+.rec-best-tag {
+  font-size: 8.5px;
+  font-weight: 700;
+  letter-spacing: 0.14em;
+  color: rgba(255, 255, 255, 0.85);
+  border: 1px solid var(--glass-border-strong);
+  border-radius: 4px;
+  padding: 1px 4px;
+  text-shadow: 0 0 8px rgba(255, 255, 255, 0.4);
+}
+.rec-miss {
+  font-size: 11.5px;
+}
+.rec-score {
+  font-size: 13.5px;
+  font-weight: 600;
+  min-width: 2.2em;
+  text-align: right;
 }
 
 @keyframes fade {
