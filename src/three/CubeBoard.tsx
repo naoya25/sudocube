@@ -1,6 +1,7 @@
 // 3D キューブ盤面 (POC の PocApp を本実装化)。
 // - 面ごと PlaneMesh 6 枚 + CanvasTexture(1024, anisotropy)
 // - ドラッグ回転 → pointerup で最寄りの 24 姿勢へ slerp 吸着
+//   (強フリック時はロック軸のまま慣性回転 → 減速後に進行方向の最寄り姿勢へ吸着)
 // - クリック (移動量閾値以下の pointerup) で raycast uv → セル選択
 // - ハイライト (選択 / peers / same-number / 誤答) はテクスチャに焼き、
 //   状態シグネチャが変わった面だけ再描画する
@@ -35,6 +36,14 @@ const SNAP_DONE_RAD = 0.004;
 const CLICK_MAX_PX = 6; // pointerdown→up の移動量がこれ以下ならクリック (セル選択) 扱い
 const AXIS_LOCK_PX = 8; // 累積移動量がこれを超えた時点でドラッグ軸 (横/縦) をロックする
 
+// --- フリック慣性回転のパラメータ (調整はここ) ---
+const FLICK_WINDOW_MS = 80; // リリース時の角速度推定に使う直近移動サンプルの窓
+const FLICK_MIN_RAD_S = 2.5; // この角速度以上でリリースしたら慣性フェーズへ (未満は即スナップ)
+const INERTIA_FRICTION = 1.3; // 指数減衰率 (1/s)。ω *= exp(-friction*dt)。小さいほど長く回る
+const INERTIA_STOP_RAD_S = 1.2; // 角速度がこれを割ったら慣性を終えてスナップへ遷移
+const MAX_SPIN_RAD_S = Math.PI * 6; // 角速度上限 (~3回転/s)。合成イベント等の暴走防止
+const SNAP_AHEAD_RAD = Math.PI / 4; // スナップ先選定時に進行方向へ先読みする角度 (通過直後へ戻さない)
+
 declare global {
   interface Window {
     /** 実機検証用フック。 */
@@ -44,7 +53,13 @@ declare global {
       getFrontFace: () => FaceId;
       select: (face: FaceId, i: number) => void;
       getCell: (face: FaceId, i: number) => { value: number; given: boolean };
-      debug: () => { dragging: boolean; poseIndex: number; snapped: number; hasSnapTarget: boolean };
+      debug: () => {
+        dragging: boolean;
+        poseIndex: number;
+        snapped: number;
+        hasSnapTarget: boolean;
+        inertia: { omega: number; traveledRad: number } | null;
+      };
     };
   }
 }
@@ -96,6 +111,12 @@ function CubeScene(props: CubeBoardProps) {
   const snappedPoseRef = useRef(IDENTITY_POSE_INDEX);
   const snapTargetRef = useRef<Quaternion | null>(null);
   const draggingRef = useRef(false);
+  // フリック慣性の状態。axis はロック軸のワールドベクトル、omega は符号付き角速度 (rad/s)。
+  const inertiaRef = useRef<{ axis: Vector3; omega: number; traveledRad: number } | null>(null);
+  // 慣性中の pointerdown は「回転を掴んで止める」操作なので、直後の click をセル選択にしない。
+  const suppressClickRef = useRef(false);
+  const spinDqRef = useRef(new Quaternion());
+  const aheadQRef = useRef(new Quaternion());
 
   // props を ref 経由で参照する (redraw をイベント/フレームから呼ぶため)。
   const stateRef = useRef({ board, selected, wrongCell });
@@ -158,13 +179,19 @@ function CubeScene(props: CubeBoardProps) {
     let startX = 0;
     let startY = 0;
     let axisLock: 'h' | 'v' | null = null;
+    // 直近の移動サンプル (適用した回転角と時刻)。リリース時の角速度推定に使う。
+    let samples: { t: number; rad: number }[] = [];
     const camRight = new Vector3();
     const camUp = new Vector3();
     const dq = new Quaternion();
 
     const onDown = (e: PointerEvent) => {
+      // 慣性中に掴んだら即停止。その pointerup 由来の click はセル選択にしない。
+      suppressClickRef.current = inertiaRef.current !== null;
+      inertiaRef.current = null;
       draggingRef.current = true;
       snapTargetRef.current = null;
+      samples = [];
       lastX = e.clientX;
       lastY = e.clientY;
       startX = e.clientX;
@@ -195,15 +222,17 @@ function CubeScene(props: CubeBoardProps) {
         dx = tdx;
         dy = tdy;
       }
+      const rad = (axisLock === 'h' ? dx : dy) * DRAG_SPEED;
       if (axisLock === 'h') {
         camUp.set(0, 1, 0).applyQuaternion(camera.quaternion);
-        dq.setFromAxisAngle(camUp, dx * DRAG_SPEED);
+        dq.setFromAxisAngle(camUp, rad);
       } else {
         camRight.set(1, 0, 0).applyQuaternion(camera.quaternion);
-        dq.setFromAxisAngle(camRight, dy * DRAG_SPEED);
+        dq.setFromAxisAngle(camRight, rad);
       }
       group.quaternion.premultiply(dq);
       poseIndexRef.current = -1;
+      samples.push({ t: performance.now(), rad });
     };
     const onUp = (e: PointerEvent) => {
       if (!draggingRef.current) return;
@@ -215,6 +244,26 @@ function CubeScene(props: CubeBoardProps) {
       }
       const group = groupRef.current;
       if (!group) return;
+      // リリース時の角速度推定: 直近 FLICK_WINDOW_MS の移動サンプルの平均
+      // (最後の1フレームだけだとノイズるので短い窓で均す)。
+      const now = performance.now();
+      const recent = samples.filter((s) => now - s.t <= FLICK_WINDOW_MS);
+      let omega = 0;
+      if (axisLock !== null && recent.length > 0) {
+        const spanMs = Math.max(now - recent[0].t, 1);
+        const totalRad = recent.reduce((acc, s) => acc + s.rad, 0);
+        omega = (totalRad / spanMs) * 1000;
+      }
+      omega = Math.max(-MAX_SPIN_RAD_S, Math.min(MAX_SPIN_RAD_S, omega));
+      if (axisLock !== null && Math.abs(omega) >= FLICK_MIN_RAD_S) {
+        // 慣性フェーズへ: ロック軸のまま角速度で回し続ける (useFrame 側で減衰)。
+        const axis = new Vector3();
+        if (axisLock === 'h') axis.set(0, 1, 0).applyQuaternion(camera.quaternion);
+        else axis.set(1, 0, 0).applyQuaternion(camera.quaternion);
+        inertiaRef.current = { axis, omega, traveledRad: 0 };
+        snapTargetRef.current = null;
+        return;
+      }
       const i = nearestPoseIndex(group.quaternion);
       snapTargetRef.current = POSES[i].clone();
       poseIndexRef.current = i;
@@ -230,11 +279,32 @@ function CubeScene(props: CubeBoardProps) {
     };
   }, [gl, camera]);
 
-  // スナップアニメーション。
+  // 慣性回転 + スナップアニメーション。
   useFrame((_, dt) => {
     const group = groupRef.current;
+    if (!group || draggingRef.current) return;
+    // 慣性フェーズ: ロック軸まわりに角速度で回転継続、指数減衰。
+    const inertia = inertiaRef.current;
+    if (inertia) {
+      const step = inertia.omega * dt;
+      spinDqRef.current.setFromAxisAngle(inertia.axis, step);
+      group.quaternion.premultiply(spinDqRef.current);
+      inertia.traveledRad += Math.abs(step);
+      inertia.omega *= Math.exp(-INERTIA_FRICTION * dt);
+      if (Math.abs(inertia.omega) < INERTIA_STOP_RAD_S) {
+        // 進行方向へ SNAP_AHEAD_RAD 先読みした姿勢の最寄りを選ぶことで、
+        // 通り過ぎた直後の姿勢へ巻き戻る「カクッ」を防ぐ。
+        spinDqRef.current.setFromAxisAngle(inertia.axis, Math.sign(inertia.omega) * SNAP_AHEAD_RAD);
+        aheadQRef.current.copy(group.quaternion).premultiply(spinDqRef.current);
+        const i = nearestPoseIndex(aheadQRef.current);
+        snapTargetRef.current = POSES[i].clone();
+        poseIndexRef.current = i;
+        inertiaRef.current = null;
+      }
+      return;
+    }
     const target = snapTargetRef.current;
-    if (!group || !target || draggingRef.current) return;
+    if (!target) return;
     // quaternion の符号が逆だと遠回りに slerp するので近い側に揃える。
     if (group.quaternion.dot(target) < 0) {
       target.set(-target.x, -target.y, -target.z, -target.w);
@@ -253,6 +323,8 @@ function CubeScene(props: CubeBoardProps) {
   // ドラッグ回転と区別する。raycast は material.side = FrontSide なので表向きの面のみ当たる。
   const handleClick = useCallback(
     (face: FaceId) => (e: ThreeEvent<MouseEvent>) => {
+      // 慣性を掴んで止めたタップはセル選択として扱わない (誤発火防止)。
+      if (suppressClickRef.current) return;
       if (e.delta > CLICK_MAX_PX || !e.uv) return;
       e.stopPropagation(); // 最前面の交点のみ採用
       onSelectCell({ face, i: uvToCell(face, e.uv.x, e.uv.y) });
@@ -267,6 +339,7 @@ function CubeScene(props: CubeBoardProps) {
         const group = groupRef.current;
         if (!group || i < 0 || i >= POSES.length) return;
         snapTargetRef.current = null;
+        inertiaRef.current = null;
         group.quaternion.copy(POSES[i]);
         poseIndexRef.current = i;
         snappedPoseRef.current = i;
@@ -285,6 +358,9 @@ function CubeScene(props: CubeBoardProps) {
         poseIndex: poseIndexRef.current,
         snapped: snappedPoseRef.current,
         hasSnapTarget: snapTargetRef.current !== null,
+        inertia: inertiaRef.current
+          ? { omega: inertiaRef.current.omega, traveledRad: inertiaRef.current.traveledRad }
+          : null,
       }),
     };
     return () => {
