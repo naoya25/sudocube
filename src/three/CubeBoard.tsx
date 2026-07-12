@@ -44,6 +44,21 @@ const INERTIA_STOP_RAD_S = 1.2; // 角速度がこれを割ったら慣性を終
 const MAX_SPIN_RAD_S = Math.PI * 6; // 角速度上限 (~3回転/s)。合成イベント等の暴走防止
 const SNAP_AHEAD_RAD = Math.PI / 4; // スナップ先選定時に進行方向へ先読みする角度 (通過直後へ戻さない)
 
+// --- イントロ回転演出のパラメータ (調整はここ) ---
+// ゲーム開始時にキューブを斜めの姿勢から大きくタンブル回転させ、
+// ease-out で減速しながら正面姿勢 (pose 0) に着地させる。
+// 残り回転角 = 総回転角 × (1 - easeOutCubic(p)) で計算するため、端数 (OFFSET) が
+// そのまま開始時の「斜め」姿勢になり、終端 (p=1) では厳密に恒等 = 正面になる。
+const INTRO_DURATION_MS = 1800; // 演出の長さ
+const INTRO_YAW_RAD = Math.PI * 4 + 0.55; // yaw 総回転量 (720° + 斜めオフセット)
+const INTRO_PITCH_RAD = Math.PI * 2 + 0.42; // pitch 総回転量 (360° + 斜めオフセット)
+
+/** ease-out cubic。回り始めが速く、着地に向けて滑らかに減速する。 */
+function easeOutCubic(p: number): number {
+  const q = 1 - p;
+  return 1 - q * q * q;
+}
+
 declare global {
   interface Window {
     /** 実機検証用フック。 */
@@ -59,6 +74,7 @@ declare global {
         snapped: number;
         hasSnapTarget: boolean;
         inertia: { omega: number; traveledRad: number } | null;
+        intro: { elapsedMs: number; progress: number; remainingYawRad: number } | null;
       };
     };
   }
@@ -73,10 +89,15 @@ export interface CubeBoardProps {
   onSelectCell: (ref: CellRef) => void;
   /** スナップ確定時に正面 face とその正立角を通知する (矢印移動・HUD 用)。 */
   onFrontFaceChange: (face: FaceId, uprightDeg: number) => void;
+  /** ゲーム開始ごとに増えるカウンタ。変化するたびイントロ回転演出を再生する (0 は再生しない)。 */
+  introNonce: number;
+  /** イントロ演出の開始/終了 (完了・中断・reduced-motion スキップ) を通知する。 */
+  onIntroStateChange: (active: boolean) => void;
 }
 
 function CubeScene(props: CubeBoardProps) {
-  const { board, selected, wrongCell, boardVersion, onSelectCell, onFrontFaceChange } = props;
+  const { board, selected, wrongCell, boardVersion, onSelectCell, onFrontFaceChange, introNonce, onIntroStateChange } =
+    props;
   const { gl, camera } = useThree();
   const groupRef = useRef<Group>(null);
 
@@ -117,6 +138,15 @@ function CubeScene(props: CubeBoardProps) {
   const suppressClickRef = useRef(false);
   const spinDqRef = useRef(new Quaternion());
   const aheadQRef = useRef(new Quaternion());
+  // イントロ回転演出の状態。null なら演出なし。
+  const introRef = useRef<{ elapsedMs: number } | null>(null);
+  const introYawQRef = useRef(new Quaternion());
+  const introPitchQRef = useRef(new Quaternion());
+  const introAxisYRef = useRef(new Vector3(0, 1, 0));
+  const introAxisXRef = useRef(new Vector3(1, 0, 0));
+  // ドラッグイベントリスナ (deps: gl/camera) から最新のコールバックを呼ぶための ref。
+  const onIntroStateChangeRef = useRef(onIntroStateChange);
+  onIntroStateChangeRef.current = onIntroStateChange;
 
   // props を ref 経由で参照する (redraw をイベント/フレームから呼ぶため)。
   const stateRef = useRef({ board, selected, wrongCell });
@@ -169,6 +199,32 @@ function CubeScene(props: CubeBoardProps) {
     redraw();
   }, [boardVersion, selected, wrongCell, redraw]);
 
+  // イントロ回転演出: introNonce が増えるたび再生する (初回開始・「新しいゲーム」共通)。
+  // テクスチャは正面姿勢 (pose 0) の正立角のまま回すので、回転中も 6 面の数字が
+  // 描かれたまま流れて見える (= キューブだと分かる演出)。
+  useEffect(() => {
+    if (introNonce <= 0) return;
+    const group = groupRef.current;
+    // 着地先 = 正面姿勢 (pose 0)。再スタート時に別姿勢でも必ず正面へ戻す。
+    snappedPoseRef.current = IDENTITY_POSE_INDEX;
+    snapTargetRef.current = null;
+    inertiaRef.current = null;
+    redraw();
+    if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
+      // reduce 指定時は演出を省略して最初から正面静止。
+      introRef.current = null;
+      if (group) group.quaternion.copy(POSES[IDENTITY_POSE_INDEX]);
+      poseIndexRef.current = IDENTITY_POSE_INDEX;
+      notifyFront();
+      onIntroStateChange(false);
+      return;
+    }
+    introRef.current = { elapsedMs: 0 };
+    poseIndexRef.current = -1; // 自由回転中扱い
+    notifyFront();
+    onIntroStateChange(true);
+  }, [introNonce, redraw, notifyFront, onIntroStateChange]);
+
   // ドラッグ回転 (軸ロック式)。
   // 累積移動量が AXIS_LOCK_PX を超えた時点で |dx|>|dy| なら横・そうでなければ縦に
   // ロックし、そのドラッグ中はスクリーン単軸 (カメラ up / right) まわりのみ回す。
@@ -186,8 +242,13 @@ function CubeScene(props: CubeBoardProps) {
     const dq = new Quaternion();
 
     const onDown = (e: PointerEvent) => {
-      // 慣性中に掴んだら即停止。その pointerup 由来の click はセル選択にしない。
-      suppressClickRef.current = inertiaRef.current !== null;
+      // 慣性中・イントロ中に掴んだら即停止して通常ドラッグへ引き継ぐ。
+      // その pointerup 由来の click はセル選択にしない (誤発火防止)。
+      suppressClickRef.current = inertiaRef.current !== null || introRef.current !== null;
+      if (introRef.current !== null) {
+        introRef.current = null;
+        onIntroStateChangeRef.current(false);
+      }
       inertiaRef.current = null;
       draggingRef.current = true;
       snapTargetRef.current = null;
@@ -279,10 +340,32 @@ function CubeScene(props: CubeBoardProps) {
     };
   }, [gl, camera]);
 
-  // 慣性回転 + スナップアニメーション。
+  // イントロ演出 + 慣性回転 + スナップアニメーション。
   useFrame((_, dt) => {
     const group = groupRef.current;
     if (!group || draggingRef.current) return;
+    // イントロフェーズ: 残り回転角 = 総回転角 × (1 - easeOutCubic(p))。
+    // p=1 で残り 0 = 恒等 (pose 0) に厳密着地するので継ぎ目のスナップが不要。
+    const intro = introRef.current;
+    if (intro) {
+      intro.elapsedMs += dt * 1000;
+      const p = Math.min(intro.elapsedMs / INTRO_DURATION_MS, 1);
+      const remain = 1 - easeOutCubic(p);
+      introYawQRef.current.setFromAxisAngle(introAxisYRef.current, INTRO_YAW_RAD * remain);
+      introPitchQRef.current.setFromAxisAngle(introAxisXRef.current, INTRO_PITCH_RAD * remain);
+      // world 軸で yaw → pitch の順に合成 (タンブル感)。
+      group.quaternion.copy(introYawQRef.current).premultiply(introPitchQRef.current);
+      if (p >= 1) {
+        group.quaternion.copy(POSES[IDENTITY_POSE_INDEX]);
+        introRef.current = null;
+        poseIndexRef.current = IDENTITY_POSE_INDEX;
+        snappedPoseRef.current = IDENTITY_POSE_INDEX;
+        redraw();
+        notifyFront();
+        onIntroStateChangeRef.current(false);
+      }
+      return;
+    }
     // 慣性フェーズ: ロック軸まわりに角速度で回転継続、指数減衰。
     const inertia = inertiaRef.current;
     if (inertia) {
@@ -340,6 +423,10 @@ function CubeScene(props: CubeBoardProps) {
         if (!group || i < 0 || i >= POSES.length) return;
         snapTargetRef.current = null;
         inertiaRef.current = null;
+        if (introRef.current !== null) {
+          introRef.current = null;
+          onIntroStateChangeRef.current(false);
+        }
         group.quaternion.copy(POSES[i]);
         poseIndexRef.current = i;
         snappedPoseRef.current = i;
@@ -353,15 +440,26 @@ function CubeScene(props: CubeBoardProps) {
         value: stateRef.current.board.faces[face][i],
         given: stateRef.current.board.givens[face][i] === 1,
       }),
-      debug: () => ({
-        dragging: draggingRef.current,
-        poseIndex: poseIndexRef.current,
-        snapped: snappedPoseRef.current,
-        hasSnapTarget: snapTargetRef.current !== null,
-        inertia: inertiaRef.current
-          ? { omega: inertiaRef.current.omega, traveledRad: inertiaRef.current.traveledRad }
-          : null,
-      }),
+      debug: () => {
+        const intro = introRef.current;
+        return {
+          dragging: draggingRef.current,
+          poseIndex: poseIndexRef.current,
+          snapped: snappedPoseRef.current,
+          hasSnapTarget: snapTargetRef.current !== null,
+          inertia: inertiaRef.current
+            ? { omega: inertiaRef.current.omega, traveledRad: inertiaRef.current.traveledRad }
+            : null,
+          intro: intro
+            ? {
+                elapsedMs: intro.elapsedMs,
+                progress: Math.min(intro.elapsedMs / INTRO_DURATION_MS, 1),
+                remainingYawRad:
+                  INTRO_YAW_RAD * (1 - easeOutCubic(Math.min(intro.elapsedMs / INTRO_DURATION_MS, 1))),
+              }
+            : null,
+        };
+      },
     };
     return () => {
       delete window.__cube;

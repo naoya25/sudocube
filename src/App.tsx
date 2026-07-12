@@ -45,6 +45,10 @@ function App() {
   // session はミュータブル (inputCell が破壊的更新) なので、参照は変えず強制再描画で反映する。
   // version は CubeBoard へ渡して盤面テクスチャの再焼きトリガーにも使う。
   const [version, bump] = useReducer((x: number) => x + 1, 0);
+  // イントロ回転演出: ゲーム開始ごとに nonce を増やして CubeBoard に再生を指示する。
+  // introActive 中はセル選択・数字入力を無効化する (ドラッグでの中断は CubeBoard 側)。
+  const [introNonce, bumpIntro] = useReducer((x: number) => x + 1, 0);
+  const [introActive, setIntroActive] = useState(false);
   const wrongTimer = useRef<number | null>(null);
   const restartBtnRef = useRef<HTMLButtonElement>(null);
 
@@ -55,6 +59,8 @@ function App() {
     setWrongCell(null);
     setResult(null);
     setNow(Date.now());
+    setIntroActive(true);
+    bumpIntro();
     bump();
   }, []);
 
@@ -78,7 +84,7 @@ function App() {
 
   const handleInput = useCallback(
     (value: number) => {
-      if (!session || session.status !== 'playing' || !selected) return;
+      if (!session || session.status !== 'playing' || !selected || introActive) return;
       const res = inputCell(session, selected.face, selected.i, value);
       if (res.wrong) flashWrong(selected);
       bump();
@@ -87,22 +93,26 @@ function App() {
         setResult({ score: score(session, t), ms: elapsedMs(session, t), mistakes: session.mistakes });
       }
     },
-    [session, selected, flashWrong],
+    [session, selected, flashWrong, introActive],
   );
 
   const handleErase = useCallback(() => {
-    if (!session || session.status !== 'playing' || !selected) return;
+    if (!session || session.status !== 'playing' || !selected || introActive) return;
     eraseCell(session, selected.face, selected.i);
     bump();
-  }, [session, selected]);
+  }, [session, selected, introActive]);
 
   const handleFrontFaceChange = useCallback((face: FaceId, deg: number) => {
     setFront({ face, deg });
   }, []);
 
+  const handleIntroStateChange = useCallback((active: boolean) => {
+    setIntroActive(active);
+  }, []);
+
   // キーボード操作 (数字入力・消去・矢印移動)。矢印は正面 face 内を画面方向で移動する。
   useEffect(() => {
-    if (!session || session.status !== 'playing') return;
+    if (!session || session.status !== 'playing' || introActive) return;
     const onKey = (e: KeyboardEvent) => {
       if (e.key >= '1' && e.key <= '9') {
         handleInput(Number(e.key));
@@ -123,7 +133,7 @@ function App() {
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [session, selected, front, handleInput, handleErase]);
+  }, [session, selected, front, handleInput, handleErase, introActive]);
 
   // 結果 dialog が開いたら「もう一度」にフォーカスを移し、Escape で再スタートできるように。
   useEffect(() => {
@@ -162,7 +172,8 @@ function App() {
   }
 
   const won = session.status === 'won';
-  const canInput = selected !== null && session.puzzle.givens[selected.face][selected.i] !== 1 && !won;
+  const canInput =
+    selected !== null && session.puzzle.givens[selected.face][selected.i] !== 1 && !won && !introActive;
 
   return (
     <div className="app">
@@ -200,6 +211,8 @@ function App() {
           boardVersion={version}
           onSelectCell={setSelected}
           onFrontFaceChange={handleFrontFaceChange}
+          introNonce={introNonce}
+          onIntroStateChange={handleIntroStateChange}
         />
       </main>
 
