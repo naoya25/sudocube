@@ -6,18 +6,28 @@ import {
   addRecord,
   appendRecord,
   clearCurrentGame,
+  countFilledCells,
   CURRENT_GAME_KEY,
+  deleteSave,
   deserializeGame,
   loadCurrentGame,
   loadRecords,
+  loadSaves,
   MAX_RECORDS,
+  MAX_SAVES,
+  migrateLegacyCurrentGame,
+  newSaveId,
   parseRecords,
   RECORDS_KEY,
   saveCurrentGame,
+  SAVES_KEY,
+  saveSlot,
   SCHEMA_VERSION,
   serializeGame,
   serializeRecords,
   toSession,
+  TOTAL_CELLS,
+  upsertRawSave,
   type ClearRecord,
   type StorageLike,
 } from './persistence';
@@ -275,4 +285,157 @@ describe('persistence: storage 入出力', () => {
   function rec0(): ClearRecord {
     return { clearedAt: '2026-07-12T00:00:00.000Z', timeMs: 1000, mistakes: 0, score: 100, seed: null };
   }
+});
+
+describe('persistence: マルチスロットセーブ (saves)', () => {
+  it('newSaveId は空でなくほぼ衝突しない', () => {
+    const ids = new Set(Array.from({ length: 100 }, () => newSaveId()));
+    expect(ids.size).toBe(100);
+    for (const id of ids) expect(id.length).toBeGreaterThan(0);
+  });
+
+  it('countFilledCells は埋まっているマス数を返す (入力で増える)', () => {
+    const session = newGame(7, 0);
+    const before = countFilledCells(session.board);
+    expect(before).toBeGreaterThan(0);
+    expect(before).toBeLessThan(TOTAL_CELLS);
+    outer: for (const f of FACES) {
+      for (let i = 0; i < 81; i++) {
+        if (session.board.faces[f][i] === 0) {
+          inputCell(session, f, i, session.solution.faces[f][i]);
+          break outer;
+        }
+      }
+    }
+    expect(countFilledCells(session.board)).toBeGreaterThan(before);
+  });
+
+  it('saveSlot → loadSaves: 2 スロットが savedAt 降順で並ぶ', () => {
+    const storage = memoryStorage();
+    const a = playedSession();
+    const b = playedSession();
+    saveSlot('slot-a', a.session, a.notes, 1, a.session.startedAt + 1000, storage);
+    saveSlot('slot-b', b.session, b.notes, 2, b.session.startedAt + 2000, storage);
+    const saves = loadSaves(storage);
+    expect(saves.map((s) => s.id)).toEqual(['slot-b', 'slot-a']);
+    expect(saves[0].seed).toBe(2);
+    expect(saves[1].elapsedMs).toBe(1000);
+  });
+
+  it('同じ id への saveSlot は追加ではなく置き換え (upsert)', () => {
+    const storage = memoryStorage();
+    const { session, notes } = playedSession();
+    saveSlot('slot-a', session, notes, 1, session.startedAt + 1000, storage);
+    saveSlot('slot-a', session, notes, 1, session.startedAt + 5000, storage);
+    const saves = loadSaves(storage);
+    expect(saves).toHaveLength(1);
+    expect(saves[0].elapsedMs).toBe(5000);
+  });
+
+  it('upsertRawSave は MAX_SAVES 超過時に最終プレイが最も古いものから削除する', () => {
+    let list: Record<string, unknown>[] = [];
+    for (let i = 0; i < MAX_SAVES + 5; i++) {
+      list = upsertRawSave(list, {
+        id: `s${i}`,
+        savedAt: new Date(1_000_000 + i * 1000).toISOString(),
+      });
+    }
+    expect(list).toHaveLength(MAX_SAVES);
+    // 古い 5 件 (s0..s4) が消え、最新 (s24) が先頭
+    expect(list[0].id).toBe(`s${MAX_SAVES + 4}`);
+    expect(list.map((it) => it.id)).not.toContain('s0');
+    expect(list.map((it) => it.id)).not.toContain('s4');
+    expect(list.map((it) => it.id)).toContain('s5');
+  });
+
+  it('upsertRawSave は savedAt が古いエントリを挿入しても降順を保つ', () => {
+    const newer = { id: 'n', savedAt: '2026-07-12T10:00:00.000Z' };
+    const older = { id: 'o', savedAt: '2026-07-01T10:00:00.000Z' };
+    const list = upsertRawSave([newer], older);
+    expect(list.map((it) => it.id)).toEqual(['n', 'o']);
+  });
+
+  it('deleteSave は指定 id だけ消す', () => {
+    const storage = memoryStorage();
+    const a = playedSession();
+    saveSlot('slot-a', a.session, a.notes, 1, a.session.startedAt + 1000, storage);
+    saveSlot('slot-b', a.session, a.notes, 2, a.session.startedAt + 2000, storage);
+    deleteSave('slot-a', storage);
+    const saves = loadSaves(storage);
+    expect(saves.map((s) => s.id)).toEqual(['slot-b']);
+  });
+
+  it('loadSaves は壊れたエントリだけ捨てて有効なものを残す', () => {
+    const storage = memoryStorage();
+    const { session, notes } = playedSession();
+    saveSlot('good', session, notes, 1, session.startedAt + 1000, storage);
+    const list = JSON.parse(storage.map.get(SAVES_KEY) ?? '[]') as unknown[];
+    list.push({ id: 'broken', v: 1, board: 'garbage' });
+    list.push('junk');
+    list.push({ noId: true });
+    storage.setItem(SAVES_KEY, JSON.stringify(list));
+    const saves = loadSaves(storage);
+    expect(saves.map((s) => s.id)).toEqual(['good']);
+  });
+
+  it('storage が null / 例外でも死なない', () => {
+    const { session, notes } = playedSession();
+    expect(() => saveSlot('a', session, notes, 1, Date.now(), null)).not.toThrow();
+    expect(loadSaves(null)).toEqual([]);
+    expect(() => deleteSave('a', null)).not.toThrow();
+    expect(() => migrateLegacyCurrentGame(null)).not.toThrow();
+    const throwing = throwingStorage();
+    expect(() => saveSlot('a', session, notes, 1, Date.now(), throwing)).not.toThrow();
+    expect(loadSaves(throwing)).toEqual([]);
+    expect(() => deleteSave('a', throwing)).not.toThrow();
+    expect(() => migrateLegacyCurrentGame(throwing)).not.toThrow();
+  });
+});
+
+describe('persistence: 旧 v1 単一セーブの移行 (migrateLegacyCurrentGame)', () => {
+  it('旧 sudocube:current を saves の 1 エントリへ移行し旧キーを消す', () => {
+    const storage = memoryStorage();
+    const { session, notes } = playedSession();
+    storage.setItem(CURRENT_GAME_KEY, serializeGame(session, notes, 42, session.startedAt + 90_000));
+    migrateLegacyCurrentGame(storage);
+    expect(storage.map.has(CURRENT_GAME_KEY)).toBe(false);
+    const saves = loadSaves(storage);
+    expect(saves).toHaveLength(1);
+    expect(saves[0].seed).toBe(42);
+    expect(saves[0].elapsedMs).toBe(90_000);
+    expect(saves[0].id.length).toBeGreaterThan(0);
+    // 復元して続きをプレイできる
+    const restored = toSession(saves[0], Date.now());
+    expect(restored.status).toBe('playing');
+  });
+
+  it('既存の saves と共存する (上書きしない)', () => {
+    const storage = memoryStorage();
+    const a = playedSession();
+    saveSlot('existing', a.session, a.notes, 1, a.session.startedAt + 1000, storage);
+    storage.setItem(CURRENT_GAME_KEY, serializeGame(a.session, a.notes, 2, a.session.startedAt + 2000));
+    migrateLegacyCurrentGame(storage);
+    const saves = loadSaves(storage);
+    expect(saves).toHaveLength(2);
+    expect(saves.map((s) => s.id)).toContain('existing');
+  });
+
+  it('壊れた旧データは移行せず旧キーだけ消す', () => {
+    const storage = memoryStorage();
+    storage.setItem(CURRENT_GAME_KEY, '{broken');
+    migrateLegacyCurrentGame(storage);
+    expect(storage.map.has(CURRENT_GAME_KEY)).toBe(false);
+    expect(loadSaves(storage)).toEqual([]);
+  });
+
+  it('冪等: 旧キーが無ければ何もしない', () => {
+    const storage = memoryStorage();
+    const { session, notes } = playedSession();
+    storage.setItem(CURRENT_GAME_KEY, serializeGame(session, notes, 42, session.startedAt + 1000));
+    migrateLegacyCurrentGame(storage);
+    const after1 = storage.map.get(SAVES_KEY);
+    migrateLegacyCurrentGame(storage);
+    expect(storage.map.get(SAVES_KEY)).toBe(after1);
+    expect(loadSaves(storage)).toHaveLength(1);
+  });
 });

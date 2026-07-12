@@ -16,17 +16,20 @@ import {
 } from './core/notes';
 import {
   addRecord,
-  clearCurrentGame,
-  loadCurrentGame,
+  deleteSave,
   loadRecords,
-  saveCurrentGame,
+  loadSaves,
+  migrateLegacyCurrentGame,
+  newSaveId,
+  saveSlot,
   toSession,
   type ClearRecord,
-  type SavedGame,
+  type SaveEntry,
 } from './core/persistence';
 import { CubeBoard } from './three/CubeBoard';
 import { moveSelection, type ArrowKey, type CellRef } from './three/selection';
 import { NumberPad } from './components/NumberPad';
+import { HistoryPage } from './components/HistoryPage';
 
 /** 面の表示メタ (正面 face バッジに使う)。モノクローム方針のため色は持たない。 */
 const FACE_META: Record<FaceId, { jp: string }> = {
@@ -51,16 +54,6 @@ interface Result {
   mistakes: number;
 }
 
-function fmtDate(iso: string): string {
-  const d = new Date(iso);
-  if (Number.isNaN(d.getTime())) return '—';
-  const mm = String(d.getMonth() + 1).padStart(2, '0');
-  const dd = String(d.getDate()).padStart(2, '0');
-  const hh = String(d.getHours()).padStart(2, '0');
-  const mi = String(d.getMinutes()).padStart(2, '0');
-  return `${mm}/${dd} ${hh}:${mi}`;
-}
-
 function App() {
   const [session, setSession] = useState<Session | null>(null);
   const [selected, setSelected] = useState<CellRef | null>(null);
@@ -81,17 +74,25 @@ function App() {
   const [introActive, setIntroActive] = useState(false);
   const wrongTimer = useRef<number | null>(null);
   const restartBtnRef = useRef<HTMLButtonElement>(null);
-  // 履歴保存: スタート画面表示時に一度だけ localStorage から読む (壊れたデータは null / [])。
-  const [savedGame, setSavedGame] = useState<SavedGame | null>(() => loadCurrentGame());
+  // 履歴保存 (マルチスロット): 初回に旧 v1 単一セーブを saves へ移行してから読む。
+  const [saves, setSaves] = useState<SaveEntry[]>(() => {
+    migrateLegacyCurrentGame();
+    return loadSaves();
+  });
   const [records, setRecords] = useState<ClearRecord[]>(() => loadRecords());
+  // 履歴ページ表示中か (session が無いときのみ有効)。
+  const [showHistory, setShowHistory] = useState(false);
   // 現在のゲームの seed (戦績記録用)。復元時はセーブから引き継ぐ。
   const seedRef = useRef<number | null>(null);
+  // 現在のゲームのセーブスロット id。自動セーブは常にこの id へ upsert する。
+  const saveIdRef = useRef<string | null>(null);
   const saveTimer = useRef<number | null>(null);
 
   const startGame = useCallback(() => {
     const seed = Math.floor(Math.random() * 2 ** 32);
     seedRef.current = seed;
-    setSavedGame(null); // 古いセーブは新ゲームの初回自動セーブで上書きされる
+    saveIdRef.current = newSaveId(); // 新しいゲーム = 新スロット (他の進行中セーブは消さない)
+    setShowHistory(false);
     setSession(newGame(seed, Date.now()));
     setSelected(null);
     setWrongCell(null);
@@ -105,34 +106,53 @@ function App() {
   }, []);
 
   // 「続きから」: セーブから Session を再構築。startedAt は逆算 (離席中の時間は加算しない)。
-  const continueGame = useCallback(() => {
-    if (!savedGame) return;
+  const resumeGame = useCallback((entry: SaveEntry) => {
     const t = Date.now();
-    seedRef.current = savedGame.seed;
-    setSavedGame(null);
-    setSession(toSession(savedGame, t));
+    seedRef.current = entry.seed;
+    saveIdRef.current = entry.id; // 同じスロットへ自動セーブを続ける
+    setShowHistory(false);
+    setSession(toSession(entry, t));
     setSelected(null);
     setWrongCell(null);
-    setNotes(savedGame.notes);
+    setNotes(entry.notes);
     setNoteMode(false);
     setResult(null);
     setNow(t);
     setIntroActive(true);
     bumpIntro();
     bump();
-  }, [savedGame]);
+  }, []);
 
-  // 自動セーブ: 盤面 (version)・メモ・ミスが変わるたび 1s debounce で保存。
+  // 自動セーブ: 盤面 (version)・メモ・ミスが変わるたび 1s debounce で自分のスロットへ保存。
   useEffect(() => {
     if (!session || session.status !== 'playing') return;
     if (saveTimer.current) window.clearTimeout(saveTimer.current);
     saveTimer.current = window.setTimeout(() => {
-      saveCurrentGame(session, notes, seedRef.current, Date.now());
+      if (saveIdRef.current) saveSlot(saveIdRef.current, session, notes, seedRef.current, Date.now());
     }, 1000);
     return () => {
       if (saveTimer.current) window.clearTimeout(saveTimer.current);
     };
   }, [session, version, notes]);
+
+  // ゲーム中 HUD の「履歴」: 現ゲームを即時セーブしてから履歴ページへ。
+  const goHistoryFromGame = useCallback(() => {
+    if (saveTimer.current) window.clearTimeout(saveTimer.current);
+    if (session && session.status === 'playing' && saveIdRef.current) {
+      saveSlot(saveIdRef.current, session, notes, seedRef.current, Date.now());
+    }
+    setSession(null);
+    setSelected(null);
+    setResult(null);
+    setSaves(loadSaves());
+    setShowHistory(true);
+  }, [session, notes]);
+
+  // 履歴ページの「削除」(確認済み)。
+  const handleDeleteSave = useCallback((id: string) => {
+    deleteSave(id);
+    setSaves(loadSaves());
+  }, []);
 
   // 経過タイム: playing 中だけ 250ms ごとに now を更新する。
   useEffect(() => {
@@ -191,7 +211,8 @@ function App() {
             seed: seedRef.current,
           }),
         );
-        clearCurrentGame();
+        if (saveIdRef.current) deleteSave(saveIdRef.current);
+        setSaves(loadSaves());
       }
     },
     [session, selected, flashWrong, introActive, noteMode, handleNoteToggle],
@@ -265,10 +286,21 @@ function App() {
     return () => window.removeEventListener('keydown', onKey);
   }, [result, startGame]);
 
-  // --- スタート画面 ---
+  // --- 履歴ページ / スタート画面 ---
   if (!session) {
-    const bestTimeMs = records.length > 0 ? Math.min(...records.map((r) => r.timeMs)) : null;
-    const bestIdx = bestTimeMs === null ? -1 : records.findIndex((r) => r.timeMs === bestTimeMs);
+    if (showHistory) {
+      return (
+        <HistoryPage
+          saves={saves}
+          records={records}
+          onResume={resumeGame}
+          onDelete={handleDeleteSave}
+          onBack={() => setShowHistory(false)}
+        />
+      );
+    }
+    // 「続きから」= 最後にプレイしたセーブ (savedAt 降順の先頭) を再開するショートカット。
+    const latest = saves.length > 0 ? saves[0] : null;
     return (
       <div className="app start">
         <div className="start-card">
@@ -277,46 +309,29 @@ function App() {
           </div>
           <h1 className="title">SUDOCUBE</h1>
           <p className="lede">立方体 6 面の数独。キューブを回して全面を解こう。</p>
-          {savedGame && (
-            <button type="button" className="btn-primary" onClick={continueGame}>
+          {latest && (
+            <button type="button" className="btn-primary" onClick={() => resumeGame(latest)}>
               続きから
               <span className="btn-sub mono">
-                {fmtTime(savedGame.elapsedMs)}・ミス {savedGame.mistakes}
+                {fmtTime(latest.elapsedMs)}・ミス {latest.mistakes}
               </span>
             </button>
           )}
           <button
             type="button"
-            className={savedGame ? 'btn-secondary' : 'btn-primary'}
+            className={latest ? 'btn-secondary' : 'btn-primary'}
             onClick={startGame}
           >
-            {savedGame ? '新しいゲーム' : 'ゲームを始める'}
+            {latest ? '新しいゲーム' : 'ゲームを始める'}
+          </button>
+          <button type="button" className="btn-secondary" onClick={() => setShowHistory(true)}>
+            履歴
+            {saves.length > 0 && <span className="btn-count mono">{saves.length}</span>}
           </button>
           <p className="hint-text">
             ドラッグで回転 / セルを選んで数字パッドか 1〜9 / ⌫ キーで入力 / M でメモモード
           </p>
         </div>
-        {records.length > 0 && (
-          <section className="records-card" aria-label="クリア戦績">
-            <h2 className="records-title">戦績</h2>
-            <ol className="records-list">
-              {records.map((r, idx) => (
-                <li
-                  key={`${r.clearedAt}-${idx}`}
-                  className={`record-row${idx === bestIdx ? ' best' : ''}`}
-                >
-                  <span className="rec-date">{fmtDate(r.clearedAt)}</span>
-                  <span className="rec-time mono">
-                    {fmtTime(r.timeMs)}
-                    {idx === bestIdx && <span className="rec-best-tag">BEST</span>}
-                  </span>
-                  <span className="rec-miss">ミス {r.mistakes}</span>
-                  <span className="rec-score mono">{r.score}</span>
-                </li>
-              ))}
-            </ol>
-          </section>
-        )}
       </div>
     );
   }
@@ -348,9 +363,14 @@ function App() {
             </span>
           </div>
         </div>
-        <button type="button" className="btn-ghost" onClick={startGame}>
-          新しいゲーム
-        </button>
+        <div className="hud-actions">
+          <button type="button" className="btn-ghost" onClick={goHistoryFromGame}>
+            履歴
+          </button>
+          <button type="button" className="btn-ghost" onClick={startGame}>
+            新しいゲーム
+          </button>
+        </div>
       </header>
 
       <main className="cube-area" aria-label="3D 盤面">
