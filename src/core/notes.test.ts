@@ -1,6 +1,7 @@
 // notes.ts (候補数字メモ) のテスト: トグル・双子共有・自動クリーンアップ。
 
 import { describe, expect, it } from 'vitest';
+import { emptyBoard } from './board';
 import { peers, twins } from './geometry';
 import {
   canonicalCellId,
@@ -8,6 +9,7 @@ import {
   clearCellNotes,
   emptyNotes,
   faceNotes,
+  faceNoteFillRate,
   faceNotesSignature,
   notesAt,
   toggleNote,
@@ -144,5 +146,27 @@ describe('faceNotesSignature', () => {
     const notes = toggleNote(emptyNotes(), 'F', 76, 4);
     const [tf] = twins('F', 76)[0];
     expect(faceNotesSignature(notes, tf)).not.toBe('');
+  });
+});
+
+describe('faceNoteFillRate', () => {
+  it('空セルが 0 の面は 0 を返す (全マス埋まった面)', () => {
+    const board = emptyBoard();
+    board.faces.F.fill(1);
+    const notes = toggleNote(emptyNotes(), 'U', 40, 5); // 他面のメモは影響しない
+    expect(faceNoteFillRate(board, notes, 'F')).toBe(0);
+  });
+
+  it('その面の空セルのうちメモありセルの割合を返す (双子面に書いたメモも数える)', () => {
+    const board = emptyBoard();
+    // F 面は 40 と 76 の 2 セルだけ空にする (残り 79 セルは埋める)。
+    board.faces.F.fill(1);
+    board.faces.F[40] = 0;
+    board.faces.F[76] = 0;
+    // F76 は辺セル。双子面側の座標でメモしても canonical キー共有で F 面の分子に入る。
+    const [tf, ti] = twins('F', 76)[0];
+    expect(canonicalCellId('F', 76)).toBe(canonicalCellId(tf, ti));
+    const notes = toggleNote(emptyNotes(), tf, ti, 5);
+    expect(faceNoteFillRate(board, notes, 'F')).toBe(1 / 2);
   });
 });

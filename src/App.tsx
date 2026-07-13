@@ -4,13 +4,14 @@
 // ドラッグ回転 + 24 姿勢スナップで見る面を変える。
 
 import { useCallback, useEffect, useReducer, useRef, useState } from 'react';
-import type { FaceId } from './core/board';
+import { FACES, faceCompletion, type FaceId } from './core/board';
 import { eraseCell, elapsedMs, inputCell, newGame, score } from './core/session';
 import type { Session } from './core/session';
 import {
   cleanupAfterInput,
   clearCellNotes,
   emptyNotes,
+  faceNoteFillRate,
   toggleNote,
   type NotesMap,
 } from './core/notes';
@@ -72,6 +73,9 @@ function App() {
   // introActive 中はセル選択・数字入力を無効化する (ドラッグでの中断は CubeBoard 側)。
   const [introNonce, bumpIntro] = useReducer((x: number) => x + 1, 0);
   const [introActive, setIntroActive] = useState(false);
+  // 制覇率チップ押下で「この面を正面へ」を CubeBoard に指示する。nonce を増やして再発火させる。
+  const [focusRequest, setFocusRequest] = useState<{ face: FaceId; nonce: number } | null>(null);
+  const focusNonceRef = useRef(0);
   const wrongTimer = useRef<number | null>(null);
   const restartBtnRef = useRef<HTMLButtonElement>(null);
   // 履歴保存 (マルチスロット): 初回に旧 v1 単一セーブを saves へ移行してから読む。
@@ -250,6 +254,12 @@ function App() {
     setIntroActive(active);
   }, []);
 
+  // 制覇率チップ押下: その面を正面にする回転を CubeBoard へ要求する。
+  const handleFocusFace = useCallback((face: FaceId) => {
+    focusNonceRef.current += 1;
+    setFocusRequest({ face, nonce: focusNonceRef.current });
+  }, []);
+
   // キーボード操作 (数字入力・消去・矢印移動・メモ)。矢印は正面 face 内を画面方向で移動する。
   // M でメモモード切替、Shift+数字はモードに関わらず候補トグル。
   useEffect(() => {
@@ -362,20 +372,39 @@ function App() {
           </button>
         </div>
         <div className="hud-stats">
-          <div className="stat">
-            <span className="stat-label">ミス</span>
-            <span className={`stat-value${session.mistakes > 0 ? ' bad' : ''}`}>{session.mistakes}</span>
+          <div className="stat-group">
+            <div className="stat">
+              <span className="stat-label">ミス</span>
+              <span className={`stat-value${session.mistakes > 0 ? ' bad' : ''}`}>{session.mistakes}</span>
+            </div>
+            <div className="stat">
+              <span className="stat-label">タイム</span>
+              <span className="stat-value mono">{fmtTime(elapsedMs(session, now))}</span>
+            </div>
           </div>
-          <div className="stat">
-            <span className="stat-label">タイム</span>
-            <span className="stat-value mono">{fmtTime(elapsedMs(session, now))}</span>
-          </div>
-          <div className="stat" title="カメラに正対している面">
-            <span className="stat-label">正面</span>
-            <span className="stat-value front-face">
-              {front.face}
-              <span className="front-face-jp">{FACE_META[front.face].jp}</span>
-            </span>
+          <div className="face-chips" role="group" aria-label="面の制覇率とメモ率 (タップでその面へ回転)">
+            {FACES.map((face) => {
+              const pct = Math.floor(faceCompletion(session.board, face) * 100);
+              const notePct = Math.floor(faceNoteFillRate(session.board, notes, face) * 100);
+              const isFront = face === front.face;
+              const isDone = pct >= 100;
+              return (
+                <button
+                  key={face}
+                  type="button"
+                  className={`face-chip${isFront ? ' current' : ''}${isDone ? ' done' : ''}`}
+                  onClick={() => handleFocusFace(face)}
+                  disabled={introActive}
+                  title={`${FACE_META[face].jp}面へ回転 (制覇 ${pct}% / メモ ${notePct}%)`}
+                >
+                  <span className="face-chip-main">
+                    <span className="face-chip-label">{FACE_META[face].jp}</span>
+                    <span className="face-chip-pct mono">{pct}%</span>
+                  </span>
+                  <span className="face-chip-note mono">メモ {notePct}%</span>
+                </button>
+              );
+            })}
           </div>
         </div>
         <div className="hud-actions">
@@ -400,6 +429,7 @@ function App() {
           onFrontFaceChange={handleFrontFaceChange}
           introNonce={introNonce}
           onIntroStateChange={handleIntroStateChange}
+          focusRequest={focusRequest}
         />
       </main>
 

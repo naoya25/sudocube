@@ -77,3 +77,11 @@ export function boardFromStrings(faces: Record<FaceId, string>): Board {
   for (const f of FACES) board.faces[f] = faceFromString(faces[f]);
   return board;
 }
+
+/** 面の制覇率 (0..1)。非ゼロ (givens + 正解入力) セル数 / 81。HUD の制覇率チップ用。 */
+export function faceCompletion(board: Board, face: FaceId): number {
+  let filled = 0;
+  const arr = board.faces[face];
+  for (let i = 0; i < 81; i++) if (arr[i] !== 0) filled++;
+  return filled / 81;
+}

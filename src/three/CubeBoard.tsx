@@ -99,6 +99,8 @@ export interface CubeBoardProps {
   introNonce: number;
   /** イントロ演出の開始/終了 (完了・中断・reduced-motion スキップ) を通知する。 */
   onIntroStateChange: (active: boolean) => void;
+  /** HUD の制覇率チップから「この面を正面へ」を要求されたときの通知 (nonce 変化のたび回転)。 */
+  focusRequest: { face: FaceId; nonce: number } | null;
 }
 
 function CubeScene(props: CubeBoardProps) {
@@ -113,6 +115,7 @@ function CubeScene(props: CubeBoardProps) {
     onFrontFaceChange,
     introNonce,
     onIntroStateChange,
+    focusRequest,
   } = props;
   const { gl, camera } = useThree();
   const groupRef = useRef<Group>(null);
@@ -377,6 +380,42 @@ function CubeScene(props: CubeBoardProps) {
       el.removeEventListener('pointerup', onUp);
     };
   }, [gl, camera]);
+
+  // HUD の制覇率チップから指定面を正面へ。nonce の変化ごとに実行する (同じ面の再指定も効くように)。
+  // 候補姿勢は「その面が正面になる」もののうち (a) 正立角 0° を優先し、(b) 現姿勢からの最短回転
+  // (quaternion 内積の絶対値が最大) のものを選ぶ。ドラッグ中は無視する。
+  useEffect(() => {
+    if (!focusRequest || focusRequest.nonce <= 0) return;
+    const group = groupRef.current;
+    const table = tableRef.current;
+    const fronts = frontFacesRef.current;
+    if (!group || !table || !fronts || draggingRef.current) return;
+    const faceIndex = FACES.indexOf(focusRequest.face);
+    if (faceIndex < 0) return;
+    let best = -1;
+    let bestUpright = false;
+    let bestDot = -1;
+    for (let i = 0; i < fronts.length; i++) {
+      if (fronts[i] !== faceIndex) continue;
+      const upright = table.angles[i][faceIndex] === 0;
+      const dot = Math.abs(group.quaternion.dot(POSES[i]));
+      // 正立角 0° を優先、同条件内では最短回転 (dot 最大) を選ぶ。
+      if (best === -1 || (upright && !bestUpright) || (upright === bestUpright && dot > bestDot)) {
+        best = i;
+        bestUpright = upright;
+        bestDot = dot;
+      }
+    }
+    if (best === -1) return;
+    if (introRef.current !== null) {
+      introRef.current = null;
+      onIntroStateChangeRef.current(false);
+    }
+    inertiaRef.current = null;
+    snapTargetRef.current = POSES[best].clone();
+    poseIndexRef.current = best;
+    // 依存は focusRequest のみ (nonce 変化のたび再実行、他の値は ref 経由で最新を参照)。
+  }, [focusRequest]);
 
   // イントロ演出 + 慣性回転 + スナップアニメーション。
   useFrame((_, dt) => {

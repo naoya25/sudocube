@@ -326,8 +326,10 @@ button {
 .hud-stats {
   flex: 1;
   display: flex;
+  align-items: center;
+  flex-wrap: wrap;
   justify-content: center;
-  gap: 10px;
+  gap: 14px;
 }
 .stat {
   display: flex;
@@ -387,17 +389,81 @@ button {
     radial-gradient(65% 65% at 50% 52%, rgba(200, 216, 240, 0.06) 0%, transparent 75%);
 }
 
-/* --- HUD 正面 face バッジ --- */
-.stat-value.front-face {
+/* --- HUD ミス/タイムのグループ寄せ --- */
+.stat-group {
   display: flex;
-  align-items: center;
-  gap: 5px;
-  font-size: 17px;
+  gap: 4px;
 }
-.front-face-jp {
-  font-size: 11px;
-  font-weight: 500;
+
+/* --- HUD 面制覇率チップ (タップでその面へ回転) ---
+   上段: 面ラベル + 制覇率% (メイン) / 下段: メモ率% (セカンダリ・小さく)。 */
+.face-chips {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 4px;
+}
+.face-chip {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 1px;
+  min-width: 44px;
+  padding: 4px 6px;
+  background: var(--glass-bg);
+  border: 1px solid var(--glass-border);
+  border-radius: 8px;
+  backdrop-filter: var(--glass-blur);
+  -webkit-backdrop-filter: var(--glass-blur);
   color: var(--text-muted);
+  font-family: inherit;
+  cursor: pointer;
+  transition:
+    background-color 150ms var(--ease-standard),
+    color 150ms var(--ease-standard),
+    border-color 150ms var(--ease-standard),
+    box-shadow 200ms var(--ease-out-quart);
+}
+.face-chip:hover:not(:disabled) {
+  border-color: var(--glass-border-strong);
+  color: var(--text);
+}
+.face-chip:disabled {
+  cursor: default;
+  opacity: 0.5;
+}
+.face-chip-main {
+  display: flex;
+  align-items: baseline;
+  gap: 3px;
+}
+.face-chip-label {
+  font-size: 10px;
+  letter-spacing: 0.04em;
+}
+.face-chip-pct {
+  font-size: 10px;
+}
+/* メモ率 (セカンダリ)。done の反転時は色を継承させるため opacity で減衰する。 */
+.face-chip-note {
+  font-size: 8px;
+  opacity: 0.7;
+  white-space: nowrap;
+}
+/* 現在正面の面: 枠を強めて発光。 */
+.face-chip.current {
+  border-color: var(--glass-border-strong);
+  color: var(--text);
+  box-shadow: var(--glow-soft);
+}
+/* 100% 制覇: 塗りつぶし反転 (モノクローム内で完了を目立たせる)。 */
+.face-chip.done {
+  background: var(--text);
+  border-color: var(--text);
+  color: var(--bg);
+}
+.face-chip.done.current {
+  box-shadow: 0 0 18px rgba(255, 255, 255, 0.35);
 }
 
 /* --- 数字パッド --- */

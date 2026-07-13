@@ -3,6 +3,7 @@ import {
   emptyBoard,
   cloneBoard,
   setCell,
+  faceCompletion,
   faceToString,
   faceFromString,
   boardToStrings,
@@ -82,5 +83,24 @@ describe('board: 文字列相互変換の round-trip', () => {
   it("'0' も空として parse できる", () => {
     const arr = faceFromString('0'.repeat(81));
     expect(arr.every((x) => x === 0)).toBe(true);
+  });
+});
+
+describe('board: faceCompletion', () => {
+  it('空の面は 0', () => {
+    const b = emptyBoard();
+    expect(faceCompletion(b, 'F')).toBe(0);
+  });
+
+  it('全マス埋まった面は 1', () => {
+    const b = emptyBoard();
+    for (let i = 0; i < 81; i++) b.faces.F[i] = (i % 9) + 1;
+    expect(faceCompletion(b, 'F')).toBe(1);
+  });
+
+  it('一部だけ埋まっていれば非ゼロセル数 / 81', () => {
+    const b = emptyBoard();
+    for (let i = 0; i < 10; i++) b.faces.U[i] = 1;
+    expect(faceCompletion(b, 'U')).toBeCloseTo(10 / 81);
   });
 });

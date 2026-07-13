@@ -3,6 +3,7 @@
 // 辺・頂点セルのメモは canonical キーに正規化して保存するため、双子面で自動的に共有される。
 // クリア条件・スコアには一切影響しない表示専用の状態。UI 層 (App) が useState で保持する。
 
+import type { Board } from './board';
 import { cellId, peers, twins, type FaceId } from './geometry';
 
 /**
@@ -102,6 +103,22 @@ export function faceNotes(
   const out: (ReadonlySet<number> | undefined)[] = new Array(81);
   for (let i = 0; i < 81; i++) out[i] = notes.get(canonicalCellId(face, i));
   return out;
+}
+
+/**
+ * 面単位のメモ書き込み率 (0..1)。その面の空セル (値 0) のうち、
+ * メモが 1 つ以上あるセルの割合。空セルが 0 なら 0 を返す。HUD の面チップ用。
+ * メモは canonical キー経由で共有されるため、双子面に書いたメモもこの面で数えられる。
+ */
+export function faceNoteFillRate(board: Board, notes: NotesMap, face: FaceId): number {
+  let empty = 0;
+  let noted = 0;
+  for (let i = 0; i < 81; i++) {
+    if (board.faces[face][i] !== 0) continue;
+    empty++;
+    if ((notes.get(canonicalCellId(face, i))?.size ?? 0) > 0) noted++;
+  }
+  return empty === 0 ? 0 : noted / empty;
 }
 
 /** 面ごとの再描画シグネチャ用ダイジェスト (メモが変わった面だけ焼き直すため)。 */
