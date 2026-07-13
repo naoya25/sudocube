@@ -56,6 +56,29 @@ Cells joined along an edge must satisfy the rules of both faces at once. A singl
 | Toggle note mode | ✎ key on the pad | `M` |
 | Toggle a note candidate | number pad while in note mode | `Shift` + `1`–`9` |
 
+## Scoring
+
+The clear score is a real number from 0 to 100 (displayed to three decimal places):
+
+```
+score = max(0.001, 100 × 0.97^min(mistakes, 3) × 0.90^max(0, mistakes − 3) × (1800 / (1800 + elapsed seconds))^0.5)
+```
+
+- **Mistakes**: a two-tier penalty. The first three each multiply the remaining score by 0.97 (−3%); from the fourth onward each costs ×0.90 (−10%). Both are multiplicative, so the score never reaches zero no matter how many mistakes you make
+- **Time**: a convex curve that kicks in from second zero — the faster you are, the more each second is worth (≈ 0.026 points per second early on, ≈ 0.003 at the two-hour mark)
+
+| Example run | Score |
+|---|---|
+| No mistakes, 5 min | 92.582 |
+| No mistakes, 10 min | 86.603 |
+| No mistakes, 30 min | 70.711 |
+| No mistakes, 60 min | 57.735 |
+| No mistakes, 120 min | 44.721 |
+| 3 mistakes, 60 min | 52.693 |
+| 10 mistakes, 60 min | 25.203 |
+
+The constants live in [src/core/session.ts](src/core/session.ts) as `MISTAKE_RETENTION_SOFT` / `MISTAKE_RETENTION_HARD` / `MISTAKE_SOFT_LIMIT` / `TIME_SCALE_SECONDS` / `TIME_DECAY_EXPONENT`.
+
 ## Tech
 
 - **Vite 8 + React 19 + TypeScript**, 3D via **three.js + @react-three/fiber**, linted with oxlint, tested with Vitest

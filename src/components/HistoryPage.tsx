@@ -135,7 +135,7 @@ export function HistoryPage({ saves, records, onResume, onDelete, onBack }: Prop
                   {idx === bestIdx && <span className="rec-best-tag">BEST</span>}
                 </span>
                 <span className="rec-miss">ミス {r.mistakes}</span>
-                <span className="rec-score mono">{r.score}</span>
+                <span className="rec-score mono">{r.score.toFixed(3)}</span>
               </li>
             ))}
           </ol>

@@ -6,8 +6,11 @@ import { cloneBoard, setCell, type Board, type FaceId, FACES } from './board';
 import { generatePuzzle, type GeneratedPuzzle } from './generator';
 
 /** スコア式のチューニング定数 (難易度別に差し替え可能)。 */
-export const TARGET_SECONDS_DEFAULT = 600; // 目標秒 T0。この時間内に解けば時間係数 1.0。
-export const MISTAKE_PENALTY = 4; // ミス 1 個ごとの減点。
+export const MISTAKE_RETENTION_SOFT = 0.97; // 1〜3 回目のミスで残るスコア比率 (序盤のミスは -3%/回と緩め)。
+export const MISTAKE_RETENTION_HARD = 0.9; // 4 回目以降のミスで残るスコア比率 (-10%/回と強め。乗算なので 0 にはならない)。
+export const MISTAKE_SOFT_LIMIT = 3; // ここまでは SOFT、超えた分は HARD を適用する境界ミス数。
+export const TIME_SCALE_SECONDS = 1800; // 時間減衰のスケール秒。経過 0 秒から効く凸カーブで、速いほど 1 秒の価値が高い。
+export const TIME_DECAY_EXPONENT = 0.5; // 時間減衰の強さ (平方根)。序盤 1 秒 ≈ 0.026 点、2 時間地点 ≈ 0.003 点。
 
 export type SessionStatus = 'playing' | 'won';
 
@@ -124,21 +127,25 @@ function clamp(min: number, max: number, x: number): number {
 }
 
 /**
- * 0〜100 の整数スコア。
- *   timeMultiplier = T0 / (T0 + max(0, elapsedSec - T0))  // 目標内なら 1.0、超過で減衰
- *   raw = (100 - mistakes * MISTAKE_PENALTY) * timeMultiplier
- *   score = clamp(0, 100, round(raw))
- * ノーミス & 目標時間内 = 100。ミス 1 個ごと約 -4 点、超過時間で逓減。
+ * 0.001〜100 の実数スコア (整数丸めなし)。
+ *   mistakeFactor = MISTAKE_RETENTION_SOFT ^ min(mistakes, MISTAKE_SOFT_LIMIT)
+ *                 × MISTAKE_RETENTION_HARD ^ max(0, mistakes - MISTAKE_SOFT_LIMIT) // 3 回まで -3%/回、4 回目から -10%/回
+ *   timeFactor    = (TIME_SCALE / (TIME_SCALE + elapsedSec)) ^ TIME_DECAY_EXPONENT // 経過 0 秒から効く凸カーブ
+ *   score = clamp(0.001, 100, 100 * mistakeFactor * timeFactor)
+ * ノーミス & 経過 0 秒のみ 100。乗算減衰なので漸近的に 0 に近づくのみ (実際には 0 にならない)。
  */
 export function score(
   session: Session,
   now: number,
-  targetSeconds: number = TARGET_SECONDS_DEFAULT,
+  timeScaleSeconds: number = TIME_SCALE_SECONDS,
 ): number {
-  const t0 = Math.max(1, targetSeconds); // 0 以下だと 0/0=NaN になるため下限クランプ
+  const scale = Math.max(1, timeScaleSeconds); // 0 以下だと 0/0=NaN になるため下限クランプ
   const elapsedSec = Math.max(0, elapsedMs(session, now)) / 1000;
-  const overage = Math.max(0, elapsedSec - t0);
-  const timeMultiplier = t0 / (t0 + overage);
-  const raw = (100 - session.mistakes * MISTAKE_PENALTY) * timeMultiplier;
-  return clamp(0, 100, Math.round(raw));
+  const softMistakes = Math.min(session.mistakes, MISTAKE_SOFT_LIMIT);
+  const hardMistakes = Math.max(0, session.mistakes - MISTAKE_SOFT_LIMIT);
+  const mistakeFactor =
+    MISTAKE_RETENTION_SOFT ** softMistakes * MISTAKE_RETENTION_HARD ** hardMistakes;
+  const timeFactor = (scale / (scale + elapsedSec)) ** TIME_DECAY_EXPONENT;
+  const raw = 100 * mistakeFactor * timeFactor;
+  return clamp(0.001, 100, raw);
 }

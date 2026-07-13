@@ -6,7 +6,10 @@ import {
   isComplete,
   elapsedMs,
   score,
-  MISTAKE_PENALTY,
+  MISTAKE_RETENTION_SOFT,
+  MISTAKE_RETENTION_HARD,
+  MISTAKE_SOFT_LIMIT,
+  TIME_DECAY_EXPONENT,
   type Session,
 } from './session';
 import type { GeneratedPuzzle } from './generator';
@@ -230,50 +233,103 @@ describe('session: elapsedMs', () => {
 describe('session: score', () => {
   const base = () => createSession(makePuzzle([soloVar]), 0);
 
-  it('ノーミス & 即時 = 100', () => {
+  it('ノーミス & 経過 0 秒 = 100 (満点は経過 0 秒のみ)', () => {
     const s = base();
     expect(score(s, 0)).toBe(100);
   });
 
-  it('ミスが増えるとスコアは単調減少する', () => {
+  it('タイムは経過 0 秒から効く (平坦ゾーンなし): 300 秒で ≈ 92.582', () => {
+    const s = base();
+    const v = score(s, 300_000);
+    expect(v).toBeLessThan(100);
+    expect(v).toBeCloseTo(100 * (1800 / 2100) ** TIME_DECAY_EXPONENT, 5); // (1800/2100)^0.5 ≈ 92.582
+  });
+
+  it('ミスが増えるとスコアは単調減少する (3 回までは 0.97^n の緩い減衰)', () => {
     const s = base();
     const s0 = score(s, 0);
     s.mistakes = 1;
     const s1 = score(s, 0);
-    s.mistakes = 5;
-    const s5 = score(s, 0);
+    s.mistakes = 3;
+    const s3 = score(s, 0);
     expect(s0).toBeGreaterThan(s1);
-    expect(s1).toBeGreaterThan(s5);
-    expect(s1).toBe(100 - MISTAKE_PENALTY); // ミス 1 個 = -4 (目標時間内)
+    expect(s1).toBeGreaterThan(s3);
+    expect(s1).toBeCloseTo(100 * MISTAKE_RETENTION_SOFT, 5); // ミス 1 個 = 100 * 0.97 = 97
+    expect(s3).toBeCloseTo(100 * MISTAKE_RETENTION_SOFT ** 3, 5); // ミス 3 個 = 100 * 0.97^3 ≈ 91.267
   });
 
-  it('目標時間を超過するとスコアが下がる', () => {
+  it('ミスは 2 段階: 4 回目からのペナルティ (-10%) は 3 回目まで (-3%) より重い', () => {
     const s = base();
-    const inTime = score(s, 600_000); // ちょうど 600 秒 = 目標内、係数 1.0
-    const over = score(s, 1_200_000); // 1200 秒 = 大幅超過
-    expect(inTime).toBe(100);
-    expect(over).toBeLessThan(100);
+    s.mistakes = 2;
+    const s2 = score(s, 0);
+    s.mistakes = 3;
+    const s3 = score(s, 0);
+    s.mistakes = 4;
+    const s4 = score(s, 0);
+    expect(s4).toBeCloseTo(
+      100 * MISTAKE_RETENTION_SOFT ** MISTAKE_SOFT_LIMIT * MISTAKE_RETENTION_HARD,
+      5,
+    ); // 100 * 0.97^3 * 0.90 ≈ 82.141
+    expect(s3 - s4).toBeGreaterThan(s2 - s3); // 3→4 の落差 > 2→3 の落差
   });
 
-  it('0〜100 にクランプされる (大量ミスでも負にならない)', () => {
+  it('タイムは凸カーブ: 序盤の 300 秒は終盤の 300 秒より高くつく', () => {
+    const early = base();
+    const drop0to300 = score(early, 0) - score(early, 300_000);
+    const drop3600to3900 = score(early, 3_600_000) - score(early, 3_900_000);
+    expect(drop0to300).toBeGreaterThan(drop3600to3900);
+  });
+
+  it('60 分経過で ≈ 57.735 (timeFactor = (1800/5400)^0.5)', () => {
     const s = base();
+    const v = score(s, 3_600_000);
+    expect(v).toBeCloseTo(100 * (1800 / 5400) ** TIME_DECAY_EXPONENT, 5); // ≈ 57.735
+  });
+
+  it('大量ミスでもスコアは 0 に丸められず、漸近的に 0 に近づくのみ (乗算減衰の性質)', () => {
+    // 旧式 (減点方式) では mistakes >= 25 で 0 点にクランプされていたが、
+    // 新式は乗算のため理論上 0 にならない。50 ミスでも > 0 を保証する。
+    const s = base();
+    s.mistakes = 50;
+    const heavy = score(s, 0);
+    expect(heavy).toBeGreaterThan(0);
+    expect(heavy).toBeCloseTo(
+      100 * MISTAKE_RETENTION_SOFT ** 3 * MISTAKE_RETENTION_HARD ** 47,
+      5,
+    ); // ≈ 0.643
+
     s.mistakes = 100;
-    expect(score(s, 0)).toBe(0);
-    expect(score(s, 10_000_000)).toBe(0);
+    const veryHeavy = score(s, 0);
+    expect(veryHeavy).toBeGreaterThanOrEqual(0.001); // clamp 下限
+
+    // 大量ミス + 長時間を組み合わせても下限 0.001 でクランプされ、負にはならない。
+    const extreme = score(s, 10_000_000);
+    expect(extreme).toBeGreaterThanOrEqual(0.001);
+    expect(extreme).toBeLessThanOrEqual(veryHeavy);
   });
 
-  it('targetSeconds=0 でも NaN にならず 0〜100 を返す', () => {
+  it('代表値: 3 ミス・60 分 ≈ 52.693 / 10 ミス・60 分 ≈ 25.203', () => {
+    const threeMistakes = base();
+    threeMistakes.mistakes = 3;
+    expect(Math.abs(score(threeMistakes, 3_600_000) - 52.693)).toBeLessThan(0.001);
+
+    const tenMistakes = base();
+    tenMistakes.mistakes = 10;
+    expect(Math.abs(score(tenMistakes, 3_600_000) - 25.203)).toBeLessThan(0.001);
+  });
+
+  it('timeScaleSeconds=0 でも NaN にならず 0.001〜100 を返す', () => {
     const s = base();
     const v = score(s, 0, 0);
     expect(Number.isFinite(v)).toBe(true);
-    expect(v).toBeGreaterThanOrEqual(0);
+    expect(v).toBeGreaterThanOrEqual(0.001);
     expect(v).toBeLessThanOrEqual(100);
   });
 
-  it('負の経過時間 (now < startedAt) でもスコアは 0〜100 に収まる', () => {
+  it('負の経過時間 (now < startedAt) でもスコアは 0.001〜100 に収まる', () => {
     const s = base();
     const v = score(s, -10_000);
-    expect(v).toBeGreaterThanOrEqual(0);
+    expect(v).toBeGreaterThanOrEqual(0.001);
     expect(v).toBeLessThanOrEqual(100);
   });
 });

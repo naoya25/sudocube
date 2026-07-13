@@ -448,7 +448,7 @@ function App() {
             <div className="result-badge" aria-hidden="true" />
             <h2 className="result-title">クリア！</h2>
             <div className="score-ring">
-              <span className="score-num">{result.score}</span>
+              <span className="score-num">{result.score.toFixed(3)}</span>
               <span className="score-max">/ 100</span>
             </div>
             <dl className="result-stats">
